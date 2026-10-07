@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BridgeClient, listSockets } from "./client.ts";
+import { BridgeClient, listSockets, probeBridges } from "./client.ts";
 import { runNativeHost } from "./host.ts";
 import { install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
 import { writePiExtension } from "./pi-extension.ts";
+import { describeProfile, profileStatusLines, resolveProfile } from "./profiles.ts";
 import { VERSION } from "./version.ts";
 
 const HELP = `sitegeist ${VERSION} - browser bridge for coding harnesses
@@ -13,7 +14,8 @@ const HELP = `sitegeist ${VERSION} - browser bridge for coding harnesses
 Usage:
   sitegeist mcp             Run the MCP server on stdio (installs the native host on first run)
   sitegeist install         Write the native messaging manifest for every Chromium browser found
-  sitegeist status          Show whether the extension is reachable
+  sitegeist status          Show whether the extension is reachable, per browser profile
+  sitegeist profiles        List browser profiles: open, closed, or without the extension
   sitegeist reload          Reload the extension (picks up a rebuilt dist-chrome)
   sitegeist allow <host>    Allow agents to open a site (subdomains included)
   sitegeist yolo            Allow agents to open ANY site (no per-site prompts)
@@ -21,6 +23,9 @@ Usage:
   sitegeist debug           Print the extension's bridge state and recent timing log
   sitegeist pi-extension    Write a pi extension to ~/.pi/agent/extensions/sitegeist.ts
   sitegeist host            (internal) native messaging host, spawned by the browser
+
+  allow, yolo, ask, reload and debug act on the newest bridge; with several profiles
+  open, pick one with --profile <email | name | directory>.
 
 Harness setup:
   claude mcp add sitegeist -- sitegeist mcp
@@ -42,6 +47,7 @@ async function status(): Promise<void> {
 		try {
 			await client.connect(path);
 			console.log(`${path}: host ok, extension ${client.extensionConnected ? "connected" : "not connected"}`);
+			if (client.profile) console.log(`  profile: ${describeProfile(client.profile)}`);
 			if (client.extensionConnected) {
 				const ctx = (await client.call("tabs.context", {}, 5000)) as { tabs: unknown[] };
 				console.log(`  session tabs: ${ctx.tabs.length}`);
@@ -54,8 +60,33 @@ async function status(): Promise<void> {
 	}
 }
 
+/** `--profile <query>` and positional arguments after the command. */
+function parseArgs(): { positional: string[]; profile?: string } {
+	const rest = process.argv.slice(3);
+	const isProfileFlag = (arg: string) => arg === "--profile" || arg.startsWith("--profile=");
+	const i = rest.findIndex(isProfileFlag);
+	if (i < 0) return { positional: rest };
+	const separateValue = rest[i] === "--profile";
+	const profile = separateValue ? rest[i + 1] : rest[i].slice("--profile=".length);
+	if (!profile?.trim() || profile.startsWith("--")) throw new Error("--profile needs a value: email, profile name, or directory");
+	const end = i + (separateValue ? 2 : 1);
+	if (rest.slice(end).some(isProfileFlag)) throw new Error("--profile may only be specified once");
+	if (!["allow", "yolo", "ask", "reload", "debug"].includes(process.argv[2])) {
+		throw new Error("--profile is supported by allow, yolo, ask, reload and debug; use SITEGEIST_PROFILE for mcp");
+	}
+	return { positional: [...rest.slice(0, i), ...rest.slice(end)], profile };
+}
+
+/** Client for a one-shot maintenance command, on the --profile bridge if given. */
+async function maintenanceClient(name: string, profile: string | undefined): Promise<BridgeClient> {
+	const client = new BridgeClient({ name, profile: profile ? resolveProfile(profile) : undefined });
+	await client.connect();
+	return client;
+}
+
 async function main(): Promise<void> {
 	const [command] = process.argv.slice(2);
+	const { positional, profile } = parseArgs();
 	switch (command) {
 		case "host":
 			runNativeHost();
@@ -75,11 +106,13 @@ async function main(): Promise<void> {
 		case "status":
 			await status();
 			return;
+		case "profiles":
+			for (const line of profileStatusLines(await probeBridges())) console.log(line);
+			return;
 		case "allow": {
-			const host = process.argv[3];
-			if (!host) throw new Error("usage: sitegeist allow <host>");
-			const client = new BridgeClient({ name: "allow" });
-			await client.connect();
+			const [host] = positional;
+			if (!host) throw new Error("usage: sitegeist allow <host> [--profile <profile>]");
+			const client = await maintenanceClient("allow", profile);
 			console.log(JSON.stringify(await client.call("permission.allow", { host }, 5000)));
 			client.close();
 			return;
@@ -87,15 +120,13 @@ async function main(): Promise<void> {
 		case "yolo":
 		case "ask": {
 			const mode = command === "yolo" ? "allow_all" : "ask";
-			const client = new BridgeClient({ name: command });
-			await client.connect();
+			const client = await maintenanceClient(command, profile);
 			console.log(JSON.stringify(await client.call("permission.setMode", { mode }, 5000)));
 			client.close();
 			return;
 		}
 		case "debug": {
-			const client = new BridgeClient({ name: "debug" });
-			await client.connect();
+			const client = await maintenanceClient("debug", profile);
 			const info = (await client.call("bridge.debug", {}, 5000)) as Record<string, unknown>;
 			const bench = (await client.call("bridge.bench", {}, 30000)) as Record<string, unknown>;
 			console.log(JSON.stringify({ ...info, bench }, null, 2));
@@ -110,8 +141,7 @@ async function main(): Promise<void> {
 			if (existsSync(dist) && missing.length > 0) {
 				throw new Error(`dist-chrome is incomplete (missing ${missing.join(", ")}); run \`npm run build\` first`);
 			}
-			const client = new BridgeClient({ name: "reload" });
-			await client.connect();
+			const client = await maintenanceClient("reload", profile);
 			console.log(JSON.stringify(await client.call("bridge.reload", {}, 5000)));
 			client.close();
 			return;

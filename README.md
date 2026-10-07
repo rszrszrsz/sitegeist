@@ -82,8 +82,13 @@ Site access: by default the extension asks before an agent opens a new site. Cla
 and Codex show the prompt inline (MCP elicitation). Otherwise answer it in the side panel
 under Settings > Bridge, run `sitegeist allow <host>`, or switch to "allow any site".
 
-CLI commands: `mcp`, `install`, `status`, `allow <host>`, `reload`, `debug`,
-`pi-extension`. See `cli/README.md`.
+Several browser profiles: each profile with the extension runs its own bridge and knows
+which profile it is. Agents list them with `profiles` and switch with `profile_use`, which
+also opens a closed profile; `SITEGEIST_PROFILE` pins the MCP server to one.
+
+CLI commands: `mcp`, `install`, `status`, `profiles`, `allow <host>`, `yolo`, `ask`,
+`reload`, `debug`, `pi-extension`. Use `--profile` with `allow`, `yolo`, `ask`,
+`reload` or `debug` to pick the profile. See `cli/README.md`.
 
 ## What changed in this fork
 

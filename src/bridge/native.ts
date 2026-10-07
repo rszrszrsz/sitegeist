@@ -36,6 +36,7 @@ import {
 import { BridgeError, type HandlerContext, handlers } from "./tools.js";
 
 const ALARM_NAME = "sitegeist-bridge-keepalive";
+const PROFILE_MARKER_KEY = "bridge_profile_marker";
 const WORKER_STARTED_AT = Date.now();
 const LOG_MAX = 200;
 /** Ring buffer of timing lines, readable through bridge.debug. */
@@ -447,12 +448,23 @@ function connect(): void {
 	});
 	reconnectDelay = RECONNECT_MIN_MS;
 	trace("native port connected");
-	send({
-		type: "hello",
-		version: chrome.runtime.getManifest().version,
-		protocol: PROTOCOL_VERSION,
-		methods: [...BRIDGE_METHODS],
-	});
+	const marker = crypto.randomUUID();
+	chrome.storage.local
+		.set({ [PROFILE_MARKER_KEY]: marker })
+		.then(
+			() => marker,
+			() => undefined,
+		)
+		.then((profileMarker) => {
+			if (port !== next) return;
+			send({
+				type: "hello",
+				version: chrome.runtime.getManifest().version,
+				protocol: PROTOCOL_VERSION,
+				methods: [...BRIDGE_METHODS],
+				profileMarker,
+			});
+		});
 }
 
 /**

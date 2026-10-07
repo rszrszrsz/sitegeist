@@ -9,39 +9,10 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
-
-/** Stable id from the `key` in static/manifest.chrome.json. */
-export const EXTENSION_ID = "bbkgpflnkggdfabgjhofdmdopgjopamc";
+import { browsers, EXTENSION_ID } from "./profiles.ts";
 
 function browserDirs(): string[] {
-	const home = homedir();
-	if (process.platform === "darwin") {
-		const base = join(home, "Library", "Application Support");
-		return [
-			join(base, "Google", "Chrome"),
-			join(base, "Google", "Chrome Beta"),
-			join(base, "Google", "Chrome Canary"),
-			join(base, "Chromium"),
-			join(base, "BraveSoftware", "Brave-Browser"),
-			join(base, "Microsoft Edge"),
-			join(base, "Arc", "User Data"),
-			join(base, "Vivaldi"),
-			join(base, "com.operasoftware.Opera"),
-		];
-	}
-	if (process.platform === "linux") {
-		const cfg = join(home, ".config");
-		return [
-			join(cfg, "google-chrome"),
-			join(cfg, "google-chrome-beta"),
-			join(cfg, "chromium"),
-			join(cfg, "BraveSoftware", "Brave-Browser"),
-			join(cfg, "microsoft-edge"),
-			join(cfg, "vivaldi"),
-			join(cfg, "opera"),
-		];
-	}
-	return [];
+	return browsers().map((b) => b.userDataDir);
 }
 
 function launcherPath(): string {

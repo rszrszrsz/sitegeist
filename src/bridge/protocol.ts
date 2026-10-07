@@ -41,11 +41,26 @@ export interface RpcError {
 	message: string;
 }
 
+/** The browser profile a native host serves, found by the host from the extension's marker. */
+export interface BrowserProfile {
+	/** Browser label, e.g. "Chrome". */
+	browser: string;
+	/** The browser's user data directory. */
+	userDataDir: string;
+	/** Profile directory name inside userDataDir, e.g. "Default" or "Profile 3". */
+	directory: string;
+	/** Display name from the browser's Local State. */
+	name?: string;
+	/** Signed-in account, if any. */
+	email?: string;
+}
+
 export interface HostWelcome {
 	type: "welcome";
 	clientId: string;
 	hostVersion: string;
 	extensionConnected: boolean;
+	profile?: BrowserProfile;
 }
 
 export interface HostResponse {
@@ -64,6 +79,7 @@ export interface HostEvent {
 export interface HostExtensionStatus {
 	type: "extension_status";
 	connected: boolean;
+	profile?: BrowserProfile;
 }
 
 export type HostToClient = HostWelcome | HostResponse | HostEvent | HostExtensionStatus;
@@ -75,6 +91,12 @@ export interface ExtHello {
 	version: string;
 	protocol: number;
 	methods: string[];
+	/**
+	 * Random value the extension wrote to chrome.storage.local just before this hello.
+	 * Extensions cannot read their profile path; the host finds the profile whose
+	 * extension storage contains this value.
+	 */
+	profileMarker?: string;
 }
 
 export interface ExtResponse {

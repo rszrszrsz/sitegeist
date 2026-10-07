@@ -8,10 +8,11 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
-import type { ClientToHost, ExtToHost, HostToClient, HostToExt } from "../../src/bridge/protocol.ts";
+import type { BrowserProfile, ClientToHost, ExtToHost, HostToClient, HostToExt } from "../../src/bridge/protocol.ts";
 import { MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
+import { findProfileByMarker } from "./profiles.ts";
 import { VERSION } from "./version.ts";
 
 interface Client {
@@ -22,6 +23,7 @@ interface Client {
 
 const clients = new Map<string, Client>();
 let extensionReady = false;
+let profile: BrowserProfile | undefined;
 let seq = 0;
 
 function toExtension(message: HostToExt): void {
@@ -51,7 +53,8 @@ function onExtensionMessage(message: ExtToHost): void {
 	switch (message.type) {
 		case "hello":
 			extensionReady = true;
-			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true });
+			profile = message.profileMarker ? findProfileByMarker(message.profileMarker) : undefined;
+			for (const id of clients.keys()) toClient(id, { type: "extension_status", connected: true, profile });
 			// The extension restarted; re-announce every live client so it recreates sessions.
 			for (const client of clients.values()) {
 				if (client.hello) toExtension({ type: "client_connected", clientId: client.id, client: client.hello.client });
@@ -72,7 +75,13 @@ function onExtensionMessage(message: ExtToHost): void {
 function onClientMessage(client: Client, message: ClientToHost): void {
 	if (message.type === "hello") {
 		client.hello = message;
-		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: extensionReady });
+		toClient(client.id, {
+			type: "welcome",
+			clientId: client.id,
+			hostVersion: VERSION,
+			extensionConnected: extensionReady,
+			profile,
+		});
 		toExtension({ type: "client_connected", clientId: client.id, client: message.client });
 		return;
 	}

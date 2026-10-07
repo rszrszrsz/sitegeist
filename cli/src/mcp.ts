@@ -7,8 +7,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { BridgeClient, BridgeRpcError } from "./client.ts";
+import type { BrowserProfile } from "../../src/bridge/protocol.ts";
+import { BridgeClient, BridgeRpcError, probeBridges } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
+import { describeProfile, hasExtension, openProfile, profileStatusLines, resolveProfile, sameProfile } from "./profiles.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -89,6 +91,18 @@ function sessionKey(): string {
 	);
 }
 
+/** Poll until the profile's host has identified it, i.e. its extension is connected. */
+async function waitForBridge(profile: BrowserProfile, timeoutMs: number): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if ((await probeBridges()).some((b) => sameProfile(b.profile, profile))) return;
+		await new Promise((r) => setTimeout(r, 500));
+	}
+	throw new Error(
+		`${describeProfile(profile)} did not connect within ${timeoutMs / 1000} s. Is the sitegeist extension enabled in that profile?`,
+	);
+}
+
 export async function runMcpServer(): Promise<void> {
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
@@ -108,12 +122,15 @@ export async function runMcpServer(): Promise<void> {
 				"Reuse your current tab for step-by-step browsing; tabs_create only when two pages must stay open.",
 				"Close tabs you no longer need with tabs_close. Prefer read_page/get_page_text over screenshots for reading.",
 				"Refs expire when the page changes; take a new read_page after navigation or big updates.",
+				"Several browser profiles (accounts) may be available: profiles lists them, profile_use switches to one and opens it if needed.",
 			].join(" "),
 		},
 	);
 	const client = new BridgeClient({
 		name: harnessName(),
 		session: sessionKey(),
+		// A wrong SITEGEIST_PROFILE throws here: driving another account instead is worse than not starting.
+		profile: process.env.SITEGEIST_PROFILE ? resolveProfile(process.env.SITEGEIST_PROFILE) : undefined,
 		onEvent: (event, data) => {
 			if (event === "permission_request") void handlePermission(data);
 		},
@@ -172,6 +189,46 @@ export async function runMcpServer(): Promise<void> {
 	}
 
 	const tabId = z.number().int().optional().describe("Tab to act on; defaults to the session's current tab");
+
+	server.registerTool(
+		"profiles",
+		{
+			description:
+				"List the browser profiles (one per account) and which one you are using. Status: current, open (bridge running), closed (extension installed; profile_use opens it), no-extension (the user must load sitegeist there first).",
+			inputSchema: {},
+		},
+		async () => {
+			const lines = profileStatusLines(await probeBridges(), client.connected ? client.profile : undefined);
+			return { content: text(lines.join("\n")) };
+		},
+	);
+	server.registerTool(
+		"profile_use",
+		{
+			description:
+				"Switch to another browser profile by email, profile name, or directory (e.g. \"Profile 3\", or \"Chrome/Profile 3\" when several browsers have it). Opens a window of the profile when it is not open. Tabs of the previous profile stay where they are.",
+			inputSchema: { profile: z.string() },
+		},
+		async (args) => {
+			try {
+				const profile = resolveProfile(args.profile);
+				const opened = !(await probeBridges()).some((b) => sameProfile(b.profile, profile));
+				if (opened) {
+					if (!hasExtension(profile)) {
+						throw new Error(
+							`The sitegeist extension has not run in ${describeProfile(profile)}. The user has to load it there once (chrome://extensions > Load unpacked).`,
+						);
+					}
+					await openProfile(profile);
+					await waitForBridge(profile, 30000);
+				}
+				await client.useProfile(profile);
+				return { content: text({ profile: describeProfile(profile), opened }) };
+			} catch (err) {
+				return errorResult(err);
+			}
+		},
+	);
 
 	server.registerTool(
 		"tabs_context",

@@ -5,9 +5,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 import { browsers, EXTENSION_ID } from "./profiles.ts";
 
@@ -19,17 +19,34 @@ function launcherPath(): string {
 	return join(homedir(), ".config", "sitegeist", process.platform === "win32" ? "host.cmd" : "host");
 }
 
+function nodePath(): string {
+	const executable = realpathSync(process.execPath);
+	const name = process.platform === "win32" ? "node.exe" : "node";
+	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+		const candidate = resolve(directory, name);
+		try {
+			if (realpathSync(candidate) === executable && lstatSync(candidate).isSymbolicLink()) return candidate;
+		} catch {
+			continue;
+		}
+	}
+	return process.execPath;
+}
+
+function launcherSource(): string {
+	const node = nodePath();
+	const script = process.argv[1];
+	if (process.platform === "win32") {
+		return `@echo off\r\n"${node}" "${script}" host %*\r\n`;
+	}
+	return `#!/bin/sh\nexec "${node}" "${script}" host "$@"\n`;
+}
+
 function writeLauncher(): string {
 	const path = launcherPath();
 	mkdirSync(join(homedir(), ".config", "sitegeist"), { recursive: true, mode: 0o700 });
-	const node = process.execPath;
-	const script = process.argv[1];
-	if (process.platform === "win32") {
-		writeFileSync(path, `@echo off\r\n"${node}" "${script}" host %*\r\n`);
-	} else {
-		writeFileSync(path, `#!/bin/sh\nexec "${node}" "${script}" host "$@"\n`);
-		chmodSync(path, 0o755);
-	}
+	writeFileSync(path, launcherSource());
+	if (process.platform !== "win32") chmodSync(path, 0o755);
 	return path;
 }
 
@@ -90,11 +107,10 @@ export function install(options: { force?: boolean } = {}): InstallResult {
 	return { launcher, written, skipped };
 }
 
-/** True when at least one browser has a current manifest. */
 export function isInstalled(): boolean {
-	if (process.platform === "win32") return existsSync(join(homedir(), ".config", "sitegeist", `${NATIVE_HOST_NAME}.json`));
 	const launcher = launcherPath();
-	if (!existsSync(launcher)) return false;
+	if (!existsSync(launcher) || readFileSync(launcher, "utf8") !== launcherSource()) return false;
+	if (process.platform === "win32") return existsSync(join(homedir(), ".config", "sitegeist", `${NATIVE_HOST_NAME}.json`));
 	const manifest = manifestFor(launcher);
 	return browserDirs().some((dir) => {
 		const file = join(dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`);

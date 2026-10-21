@@ -23,6 +23,7 @@
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- Native host launchers prefer a Node symlink from `PATH` over a version-specific executable path. MCP startup detects and repairs outdated launchers after CLI or Node updates.
 - Profile switching cancels superseded connection attempts and retries; concurrent calls share their handshake, stale socket events cannot disrupt the selected profile, and bridge discovery has a bounded handshake wait. Invalid CLI profile flags fail instead of silently selecting the newest bridge.
 - Hidden agent tabs render at a fixed 1280x800 viewport (CDP device-metrics override, dropped while the user looks at the tab and restored when the agent acts on it again), so screenshot pixels, DOM coordinates and click coordinates are the same numbers in every window; models mixed the two scales on wide windows and clicked the wrong spots.
 - `actions` spaces steps by `settleMs` (default 80 ms) so a keystroke after Enter is not lost while the app opens its text editor, and accepts `key`, `text`, `doubleClick`, `move`, `sleep` and mid-list `screenshot` steps.

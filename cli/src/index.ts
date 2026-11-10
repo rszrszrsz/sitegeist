@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BridgeClient, listSockets, probeBridges } from "./client.ts";
+import { runClaudeHost } from "./claude-host.ts";
 import { runNativeHost } from "./host.ts";
 import { install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
@@ -22,6 +23,7 @@ Usage:
   sitegeist ask             Require a prompt before agents open an un-allowed site (default)
   sitegeist debug           Print the extension's bridge state and recent timing log
   sitegeist pi-extension    Write a pi extension to ~/.pi/agent/extensions/sitegeist.ts
+  sitegeist claude-host     (internal) Claude panel native messaging host
   sitegeist host            (internal) native messaging host, spawned by the browser
 
   allow, yolo, ask, reload and debug act on the newest bridge; with several profiles
@@ -88,6 +90,9 @@ async function main(): Promise<void> {
 	const [command] = process.argv.slice(2);
 	const { positional, profile } = parseArgs();
 	switch (command) {
+		case "claude-host":
+			runClaudeHost();
+			return;
 		case "host":
 			runNativeHost();
 			return;

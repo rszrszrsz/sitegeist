@@ -96,7 +96,7 @@ function send(message: ExtToHost): void {
 	}
 }
 
-function sessionIdFor(client: HostClientConnected["client"], clientId: string): string {
+export function sessionIdFor(client: HostClientConnected["client"], clientId: string): string {
 	const name = client.name.replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || "harness";
 	const key = client.session ? client.session.replace(/[^a-z0-9_-]/gi, "").slice(0, 64) : clientId;
 	return `bridge-${name}-${key}`;
@@ -153,6 +153,7 @@ async function askPermission(state: ClientState, url: string): Promise<boolean> 
 	await addPendingRequest({
 		requestId,
 		clientId: state.clientId,
+		sessionKey: state.sessionKey,
 		clientName: state.name,
 		host,
 		url,

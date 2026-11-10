@@ -18,6 +18,7 @@ export type PermissionDecision = "allow_once" | "allow_host" | "deny";
 export interface PendingRequest {
 	requestId: string;
 	clientId: string;
+	sessionKey: string;
 	clientName: string;
 	host: string;
 	url: string;

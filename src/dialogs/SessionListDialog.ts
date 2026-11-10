@@ -6,6 +6,7 @@ import { formatUsage, getAppStorage, type SessionData, type SessionMetadata } fr
 import Fuse from "fuse.js";
 import { html } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { deleteClaudeChat, isClaudeChat, listClaudeChats, loadClaudeChat, saveClaudeChat } from "../claude/storage.js";
 
 type ExportedSession = {
 	session: SessionData;
@@ -23,6 +24,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 	private onDeleteCallback?: (sessionId: string) => void;
 	private deletedSessions = new Set<string>();
 	private closedViaSelection = false;
+	private claudeSessionIds = new Set<string>();
 
 	protected modalWidth = "min(600px, 90vw)";
 	protected modalHeight = "min(700px, 90vh)";
@@ -59,7 +61,34 @@ export class SitegeistSessionListDialog extends DialogBase {
 		try {
 			// Load sessions (already sorted by lastModified index)
 			const storage = getAppStorage();
-			this.sessions = await storage.sessions.getAllMetadata();
+			const claude = await listClaudeChats();
+			this.claudeSessionIds = new Set(claude.map((chat) => chat.id));
+			this.sessions = [
+				...(await storage.sessions.getAllMetadata()),
+				...claude.map(
+					(chat): SessionMetadata => ({
+						id: chat.id,
+						title: chat.title,
+						createdAt: chat.createdAt,
+						lastModified: chat.lastModified,
+						messageCount: chat.items.length,
+						thinkingLevel: "off",
+						preview: `Claude Code · ${chat.items
+							.filter((item) => item.kind !== "tool")
+							.map((item) => item.text)
+							.join("\n")
+							.slice(0, 2048)}`,
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+					}),
+				),
+			].sort((a, b) => b.lastModified.localeCompare(a.lastModified));
 		} catch (err) {
 			console.error("Failed to load sessions:", err);
 			this.sessions = [];
@@ -79,6 +108,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 			const storage = getAppStorage();
 			if (!storage.sessions) return;
 
+			await deleteClaudeChat(sessionId);
 			await storage.sessions.deleteSession(sessionId);
 			await this.loadSessions();
 
@@ -151,14 +181,20 @@ export class SitegeistSessionListDialog extends DialogBase {
 			}
 
 			// Always export as array
-			const blob = new Blob([JSON.stringify(exported, null, 2)], {
+			const claude = sessionId ? [await loadClaudeChat(sessionId)].filter(isClaudeChat) : await listClaudeChats();
+			const blob = new Blob([JSON.stringify([...exported, ...claude], null, 2)], {
 				type: "application/json",
 			});
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
 			a.href = url;
 			const filename = sessionId
-				? `sitegeist-session-${exported[0]?.metadata.title?.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "export"}.json`
+				? `sitegeist-session-${
+						this.sessions
+							.find((session) => session.id === sessionId)
+							?.title?.replace(/[^a-z0-9]/gi, "-")
+							.toLowerCase() || "export"
+					}.json`
 				: `sitegeist-sessions-${new Date().toISOString().split("T")[0]}.json`;
 			a.download = filename;
 			a.click();
@@ -215,6 +251,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 			if (!storage.sessions) return;
 
 			for (const session of this.sessions) {
+				await deleteClaudeChat(session.id);
 				await storage.sessions.deleteSession(session.id);
 				this.deletedSessions.add(session.id);
 			}
@@ -251,6 +288,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 			if (!storage.sessions) return;
 
 			for (const session of oldSessions) {
+				await deleteClaudeChat(session.id);
 				await storage.sessions.deleteSession(session.id);
 				this.deletedSessions.add(session.id);
 			}
@@ -275,7 +313,9 @@ export class SitegeistSessionListDialog extends DialogBase {
 				const importData = JSON.parse(text);
 
 				// Import expects array of ExportedSession
-				const sessionsToImport: ExportedSession[] = importData;
+				if (!Array.isArray(importData)) throw new Error("Invalid session export");
+				const claudeChats = importData.filter(isClaudeChat);
+				const sessionsToImport: ExportedSession[] = importData.filter((entry: unknown) => !isClaudeChat(entry));
 
 				// Validate format
 				if (!sessionsToImport.every((s) => s.session && s.metadata)) {
@@ -302,6 +342,12 @@ export class SitegeistSessionListDialog extends DialogBase {
 				}
 
 				let imported = 0;
+				for (const chat of claudeChats) {
+					if (!existingIds.has(chat.id) || confirm(`Overwrite Claude Code chat "${chat.title}"?`)) {
+						await saveClaudeChat(chat);
+						imported++;
+					}
+				}
 				let skipped = 0;
 
 				// Set import time to now, with offsets to preserve order
@@ -487,10 +533,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 													<div class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
 														<span class="font-medium">${this.formatDate(session.lastModified)}</span>
 														<span>${session.messageCount} ${i18n("messages")}</span>
-														<span>${formatUsage(session.usage)}</span>
-														<span class="font-semibold ${cost > 0.01 ? "text-orange-500" : "text-green-600"}">
-															$${cost.toFixed(4)}
-														</span>
+														${this.claudeSessionIds.has(session.id) ? html`<span>Claude Code subscription</span>` : html`<span>${formatUsage(session.usage)}</span><span class="font-semibold ${cost > 0.01 ? "text-orange-500" : "text-green-600"}">$${cost.toFixed(4)}</span>`}
 													</div>
 
 													<!-- Preview text - always show if available -->

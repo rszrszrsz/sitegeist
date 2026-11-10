@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Claude Code chats in the side panel use the signed-in local Claude app, stream replies and browser activity, restore chat history and tabs, show site permission requests, and hand conversations off to the terminal.
 - `actions` bridge method and MCP tool: up to 40 input steps (press, click, drag, type, hover, scroll, wait) in one call with an optional closing screenshot. A canvas flowchart (two shapes, labels, bound arrow) is one call instead of 60 to 120 model turns.
 - `sitegeist debug` lists the active tab per window and records foreground-guard decisions; `bridge.activate` puts a tab back in front (dev aid after a focus mishap).
 - `tabs.context` flags tabs that sit outside the session's group (`inGroup: false`).

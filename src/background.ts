@@ -1,4 +1,4 @@
-import { startBridge, trace } from "./bridge/native.js";
+import { attachClaudePanel, sessionIdFor, startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
 
@@ -94,7 +94,7 @@ interface OwnedTab {
 async function ownedTabs(windowId: number): Promise<Map<number, OwnedTab>> {
 	const map = new Map<number, OwnedTab>();
 	for (const s of await listSessions()) {
-		if (s.id.startsWith("bridge-") || s.windowId !== windowId) continue;
+		if ((s.id.startsWith("bridge-") && s.homeTabId === undefined) || s.windowId !== windowId) continue;
 		const homeTabId = s.homeTabId ?? s.tabIds[0];
 		if (homeTabId === undefined) continue;
 		for (const tabId of s.tabIds) map.set(tabId, { sessionId: s.id, homeTabId });
@@ -212,6 +212,11 @@ if (chrome.runtime.onUserScriptMessage) {
 
 // Track which windows currently have an open panel document (for the keyboard toggle).
 chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
+	const claude = /^claude-panel:([a-f0-9-]{36})$/i.exec(port.name);
+	if (claude) {
+		attachClaudePanel(port, claude[1]);
+		return;
+	}
 	const match = /^sidepanel:(\d+)$/.exec(port.name);
 	if (!match) return;
 	const windowId = Number(match[1]);
@@ -239,4 +244,22 @@ chrome.commands.onCommand.addListener((command: string, sender?: chrome.tabs.Tab
 	if (command !== "toggle-sidepanel") return;
 	if (sender?.id !== undefined) openPanelOnTab(sender.id, "command");
 	else if (sender?.windowId !== undefined) chrome.sidePanel.open({ windowId: sender.windowId }).catch(() => undefined);
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+	if (message?.type !== "claude-bind") return;
+	if (typeof message.sessionId !== "string" || typeof message.tabId !== "number") {
+		sendResponse({ error: "Invalid Claude chat binding" });
+		return;
+	}
+	const { sessionId, tabId } = message;
+	void (async () => {
+		const tab = await chrome.tabs.get(tabId);
+		const key = sessionIdFor({ name: "claude", session: sessionId }, sessionId);
+		const session = await BrowserSession.open(key, "Claude Code", tab.windowId);
+		await session.setHomeTab(tabId);
+		if (!session.tabIds.includes(tabId)) await session.adopt(tabId, true);
+		sendResponse({ sessionKey: key });
+	})().catch((error: unknown) => sendResponse({ error: String(error) }));
+	return true;
 });

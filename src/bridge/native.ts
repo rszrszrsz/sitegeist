@@ -87,6 +87,12 @@ let reconnectDelay = RECONNECT_MIN_MS;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 const clients = new Map<string, ClientState>();
 const pendingDecisions = new Map<string, (decision: PermissionDecision) => void>();
+const inlinePermissionSessions = new Map<chrome.runtime.Port, string>();
+
+export function attachClaudePanel(panel: chrome.runtime.Port, sessionId: string): void {
+	inlinePermissionSessions.set(panel, sessionIdFor({ name: "claude", session: sessionId }, sessionId));
+	panel.onDisconnect.addListener(() => inlinePermissionSessions.delete(panel));
+}
 
 function send(message: ExtToHost): void {
 	try {
@@ -96,7 +102,7 @@ function send(message: ExtToHost): void {
 	}
 }
 
-function sessionIdFor(client: HostClientConnected["client"], clientId: string): string {
+export function sessionIdFor(client: HostClientConnected["client"], clientId: string): string {
 	const name = client.name.replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || "harness";
 	const key = client.session ? client.session.replace(/[^a-z0-9_-]/gi, "").slice(0, 64) : clientId;
 	return `bridge-${name}-${key}`;
@@ -153,17 +159,20 @@ async function askPermission(state: ClientState, url: string): Promise<boolean> 
 	await addPendingRequest({
 		requestId,
 		clientId: state.clientId,
+		sessionKey: state.sessionKey,
 		clientName: state.name,
 		host,
 		url,
 		createdAt: Date.now(),
 	});
-	send({
-		type: "event",
-		clientId: state.clientId,
-		event: "permission_request",
-		data: { requestId, host, url, timeoutMs: PERMISSION_TIMEOUT_MS },
-	});
+	if (![...inlinePermissionSessions.values()].includes(state.sessionKey)) {
+		send({
+			type: "event",
+			clientId: state.clientId,
+			event: "permission_request",
+			data: { requestId, host, url, timeoutMs: PERMISSION_TIMEOUT_MS },
+		});
+	}
 	const result = await decision;
 	await removePendingRequest(requestId);
 	if (result === "allow_host") await allowHost(host);

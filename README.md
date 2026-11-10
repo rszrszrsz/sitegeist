@@ -146,6 +146,7 @@ Install dependencies in each repo:
 (cd ../pi-mono && npm install)
 npm install
 (cd cli && npm install)
+(cd site && npm install)
 ```
 
 Start all dev watchers (mini-lit, pi-mono, sitegeist extension, marketing site):

@@ -17,7 +17,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 import { CLAUDE_HOST_NAME } from "../../src/claude/protocol.ts";
 import { browsers, EXTENSION_ID } from "./profiles.ts";
@@ -144,14 +144,24 @@ export function install(options: { force?: boolean } = {}): InstallResult {
 	return { launcher, written, skipped };
 }
 
+function launcherRuns(path: string): boolean {
+	if (!existsSync(path)) return false;
+	const word = /'((?:[^']|'\\'')*)'|"([^"]*)"|(\/[^\s'"]+)/g;
+	return Array.from(
+		readFileSync(path, "utf8").matchAll(word),
+		(match) => match[1]?.replaceAll("'\\''", "'") ?? match[2] ?? match[3] ?? "",
+	)
+		.filter((value) => isAbsolute(value))
+		.every((value) => existsSync(value));
+}
+
 export function isInstalled(): boolean {
 	const launcher = launcherPath();
-	if (!existsSync(launcher) || readFileSync(launcher, "utf8") !== launcherSource()) return false;
 	const hosts = [
 		[NATIVE_HOST_NAME, launcher],
 		[CLAUDE_HOST_NAME, launcherPath("claude-host")],
 	];
-	if (!existsSync(launcherPath("claude-host"))) return false;
+	if (!hosts.every(([, path]) => launcherRuns(path))) return false;
 	const hasManifests = (dir: string) =>
 		hosts.every(([name, path]) => {
 			const file = join(dir, `${name}.json`);

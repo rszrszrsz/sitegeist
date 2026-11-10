@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -59,4 +59,29 @@ install();
 assert.equal(isInstalled(), true);
 `);
 	execFileSync(process.execPath, [script], { env: { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, ".config") } });
+});
+
+test("a harness with a different PATH keeps the installed launchers", { skip: process.platform === "win32" }, (t) => {
+	const root = mkdtempSync(join(tmpdir(), "sitegeist-install-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const home = join(root, "home");
+	mkdirSync(join(home, "Library", "Application Support", "Google", "Chrome"), { recursive: true });
+	mkdirSync(join(home, ".config", "google-chrome"), { recursive: true });
+	const bin = join(root, "bin");
+	mkdirSync(bin);
+	symlinkSync(process.execPath, join(bin, "node"));
+	writeFileSync(join(bin, "claude"), "#!/bin/sh\n");
+	chmodSync(join(bin, "claude"), 0o755);
+	const script = join(root, "harness.mjs");
+	writeFileSync(script, `import { install, isInstalled } from ${JSON.stringify(new URL("../src/install.ts", import.meta.url).href)};
+process.argv[1] = ${JSON.stringify(script)};
+if (process.argv[2] === "install" || !isInstalled()) install();
+`);
+	const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config") };
+	execFileSync(join(bin, "node"), [script, "install"], { env: { ...env, PATH: [bin, "/usr/bin", "/bin"].join(delimiter) } });
+	const claudeLauncher = join(home, ".config", "sitegeist", "claude-host");
+	const installed = readFileSync(claudeLauncher, "utf8");
+	assert.match(installed, /SITEGEIST_CLAUDE=/);
+	execFileSync(process.execPath, [script], { env: { ...env, PATH: ["/usr/bin", "/bin"].join(delimiter) } });
+	assert.equal(readFileSync(claudeLauncher, "utf8"), installed);
 });

@@ -22,7 +22,7 @@ jobs:
         run: git clone --depth 1 https://github.com/badlogic/mini-lit.git ../mini-lit
 
       - name: Clone pi-mono
-        run: git clone --depth 1 https://github.com/badlogic/pi-mono.git ../pi-mono
+        run: git clone --depth 1 -b sitegeist https://github.com/rszrszrsz/pi-mono.git ../pi-mono
 
       - name: Install mini-lit
         run: cd ../mini-lit && npm install && npm run build

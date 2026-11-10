@@ -135,8 +135,13 @@ Clone this repo plus its sibling dependencies into the same parent directory:
 ```
 parent/
   mini-lit/          # https://github.com/badlogic/mini-lit
-  pi-mono/           # https://github.com/badlogic/pi-mono
+  pi-mono/           # https://github.com/rszrszrsz/pi-mono, branch sitegeist
   sitegeist/         # this repo
+```
+
+```bash
+git clone https://github.com/badlogic/mini-lit.git ../mini-lit
+git clone -b sitegeist https://github.com/rszrszrsz/pi-mono.git ../pi-mono
 ```
 
 Install dependencies in each repo:
@@ -155,36 +160,10 @@ Start all dev watchers (mini-lit, pi-mono, sitegeist extension, marketing site):
 ./dev.sh
 ```
 
-This fork needs one addition in `../pi-mono/packages/ai/src/models.ts` that upstream pi-ai
-does not have yet (runtime model discovery registers into its model registry):
-
-```ts
-export function registerModels(provider: string, models: Model<Api>[]): void {
-	const providerModels = new Map<string, Model<Api>>();
-	for (const model of models) providerModels.set(model.id, model);
-	modelRegistry.set(provider, providerModels);
-}
-
-export function resetProviderModels(provider: string): void {
-	const generated = (MODELS as Record<string, Record<string, Model<Api>>>)[provider];
-	if (!generated) {
-		modelRegistry.delete(provider);
-		return;
-	}
-	const providerModels = new Map<string, Model<Api>>();
-	for (const [id, model] of Object.entries(generated)) providerModels.set(id, model);
-	modelRegistry.set(provider, providerModels);
-}
-
-export function getGeneratedModels(provider: string): Model<Api>[] {
-	const generated = (MODELS as Record<string, Record<string, Model<Api>>>)[provider];
-	return generated ? Object.values(generated) : [];
-}
-```
-
-The composer tweaks (ArrowUp prompt recall via `historyProvider`, plain model-id button,
-arrow send button) live in `../pi-mono/packages/web-ui/src/components/MessageEditor.ts`
-and `AgentInterface.ts`; the sitegeist side only sets `agentInterface.historyProvider`.
+Sitegeist builds against the `sitegeist` branch of the pi-mono fork: v0.60.0 plus runtime
+model registration (`registerModels`), `compat.omitMaxTokens` for custom providers, and the
+composer's slash-command menu, ArrowUp prompt recall and thinking picker. Change pi-mono
+there, commit, and push the branch; CI clones it.
 
 Without the watchers, build the sibling declarations once so type checking resolves:
 

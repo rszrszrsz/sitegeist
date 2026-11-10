@@ -17,12 +17,13 @@
 
 ### Changed
 - `navigate` gained `showTab` and `closeTab`; `switchToTab` no longer focuses the tab.
-- Composer: ArrowUp in an empty composer recalls the last prompt; the model picker is a plain model-id button and the send button is an arrow (pi-web-ui `MessageEditor`/`AgentInterface`, see README). The provider/auth label was removed from the header.
+- Composer: ArrowUp in an empty composer recalls the last prompt (pi-web-ui `MessageEditor`/`AgentInterface`, see README). The provider/auth label was removed from the header.
 - Browser sessions persist in `chrome.storage.local` (they and their groups survive extension reloads), grouping retries when Chromium refuses a tab edit, and the panel adopts the tab it opens on even when that is a New Tab page.
 - Side panel is bound to a tab, not a window (Claude-in-Chrome model): each task lives on the tab its panel was opened on via `sidepanel.html?tabId=<tab>`, and the manifest declares no default panel, so a tab shows the panel only when a task owns it. Two tasks = two tabs, each with its own panel; put them in two windows to see both at once. The window-session lock and the "locked" landing page are gone; `src/utils/port.ts` is now lifecycle-only. While a task is mid-run its panel stays on the window's active tab so switching tabs doesn't tear the agent down.
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- Slash-command skills, ArrowUp prompt recall, the thinking picker and `compat.omitMaxTokens` work again. Their pi-mono changes had existed only in an uncommitted local checkout; they now live on the `sitegeist` branch of the pi-mono fork.
 - Native host launchers prefer a Node symlink from `PATH` over a version-specific executable path. MCP startup detects and repairs outdated launchers after CLI or Node updates.
 - Profile switching cancels superseded connection attempts and retries; concurrent calls share their handshake, stale socket events cannot disrupt the selected profile, and bridge discovery has a bounded handshake wait. Invalid CLI profile flags fail instead of silently selecting the newest bridge.
 - Hidden agent tabs render at a fixed 1280x800 viewport (CDP device-metrics override, dropped while the user looks at the tab and restored when the agent acts on it again), so screenshot pixels, DOM coordinates and click coordinates are the same numbers in every window; models mixed the two scales on wide windows and clicked the wrong spots.

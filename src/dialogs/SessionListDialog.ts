@@ -6,16 +6,41 @@ import { formatUsage, getAppStorage, type SessionData, type SessionMetadata } fr
 import Fuse from "fuse.js";
 import { html } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { deleteClaudeChat, isClaudeChat, listClaudeChats, loadClaudeChat, saveClaudeChat } from "../claude/storage.js";
+import {
+	type ClaudeChat,
+	deleteClaudeChat,
+	isClaudeChat,
+	listClaudeChats,
+	loadClaudeChat,
+	saveClaudeChat,
+} from "../claude/storage.js";
 
 type ExportedSession = {
 	session: SessionData;
 	metadata: SessionMetadata;
 };
 
+type Listing = Pick<SessionMetadata, "id" | "title" | "createdAt" | "lastModified" | "messageCount" | "preview"> & {
+	metadata?: SessionMetadata;
+};
+
+function claudeListing(chat: ClaudeChat): Listing {
+	return {
+		id: chat.id,
+		title: chat.title,
+		createdAt: chat.createdAt,
+		lastModified: chat.lastModified,
+		messageCount: chat.items.length,
+		preview: `Claude Code · ${chat.items
+			.flatMap((item) => (item.kind === "tool" ? [] : [item.text]))
+			.join("\n")
+			.slice(0, 2048)}`,
+	};
+}
+
 @customElement("sitegeist-session-list-dialog")
 export class SitegeistSessionListDialog extends DialogBase {
-	@state() private sessions: SessionMetadata[] = [];
+	@state() private sessions: Listing[] = [];
 	@state() private loading = true;
 	@state() private searchQuery = "";
 	@state() private showDeleteMenu = false;
@@ -24,7 +49,6 @@ export class SitegeistSessionListDialog extends DialogBase {
 	private onDeleteCallback?: (sessionId: string) => void;
 	private deletedSessions = new Set<string>();
 	private closedViaSelection = false;
-	private claudeSessionIds = new Set<string>();
 
 	protected modalWidth = "min(600px, 90vw)";
 	protected modalHeight = "min(700px, 90vh)";
@@ -61,33 +85,9 @@ export class SitegeistSessionListDialog extends DialogBase {
 		try {
 			// Load sessions (already sorted by lastModified index)
 			const storage = getAppStorage();
-			const claude = await listClaudeChats();
-			this.claudeSessionIds = new Set(claude.map((chat) => chat.id));
 			this.sessions = [
-				...(await storage.sessions.getAllMetadata()),
-				...claude.map(
-					(chat): SessionMetadata => ({
-						id: chat.id,
-						title: chat.title,
-						createdAt: chat.createdAt,
-						lastModified: chat.lastModified,
-						messageCount: chat.items.length,
-						thinkingLevel: "off",
-						preview: `Claude Code · ${chat.items
-							.filter((item) => item.kind !== "tool")
-							.map((item) => item.text)
-							.join("\n")
-							.slice(0, 2048)}`,
-						usage: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							totalTokens: 0,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						},
-					}),
-				),
+				...(await storage.sessions.getAllMetadata()).map((metadata): Listing => ({ ...metadata, metadata })),
+				...(await listClaudeChats()).map(claudeListing),
 			].sort((a, b) => b.lastModified.localeCompare(a.lastModified));
 		} catch (err) {
 			console.error("Failed to load sessions:", err);
@@ -108,8 +108,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 			const storage = getAppStorage();
 			if (!storage.sessions) return;
 
-			await deleteClaudeChat(sessionId);
-			await storage.sessions.deleteSession(sessionId);
+			await this.deleteStored(sessionId);
 			await this.loadSessions();
 
 			// Track deleted session
@@ -117,6 +116,10 @@ export class SitegeistSessionListDialog extends DialogBase {
 		} catch (err) {
 			console.error("Failed to delete session:", err);
 		}
+	}
+
+	private async deleteStored(sessionId: string): Promise<void> {
+		await Promise.all([deleteClaudeChat(sessionId), getAppStorage().sessions.deleteSession(sessionId)]);
 	}
 
 	override close() {
@@ -166,13 +169,14 @@ export class SitegeistSessionListDialog extends DialogBase {
 			if (sessionId) {
 				// Export single session
 				const session = await storage.sessions.loadSession(sessionId);
-				const metadata = this.sessions.find((s) => s.id === sessionId);
+				const metadata = this.sessions.find((s) => s.id === sessionId)?.metadata;
 				if (session && metadata) {
 					exported.push({ session, metadata });
 				}
 			} else {
 				// Export all sessions
-				for (const metadata of this.sessions) {
+				for (const { metadata } of this.sessions) {
+					if (!metadata) continue;
 					const session = await storage.sessions.loadSession(metadata.id);
 					if (session) {
 						exported.push({ session, metadata });
@@ -205,7 +209,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 		}
 	}
 
-	private getFilteredSessions(): SessionMetadata[] {
+	private getFilteredSessions(): Listing[] {
 		if (!this.searchQuery.trim()) {
 			return this.sessions;
 		}
@@ -226,7 +230,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 		const filtered = this.getFilteredSessions();
 		return {
 			totalSessions: filtered.length,
-			totalCost: filtered.reduce((sum, s) => sum + s.usage.cost.total, 0),
+			totalCost: filtered.reduce((sum, s) => sum + (s.metadata?.usage.cost.total ?? 0), 0),
 			totalMessages: filtered.reduce((sum, s) => sum + s.messageCount, 0),
 		};
 	}
@@ -251,8 +255,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 			if (!storage.sessions) return;
 
 			for (const session of this.sessions) {
-				await deleteClaudeChat(session.id);
-				await storage.sessions.deleteSession(session.id);
+				await this.deleteStored(session.id);
 				this.deletedSessions.add(session.id);
 			}
 
@@ -288,8 +291,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 			if (!storage.sessions) return;
 
 			for (const session of oldSessions) {
-				await deleteClaudeChat(session.id);
-				await storage.sessions.deleteSession(session.id);
+				await this.deleteStored(session.id);
 				this.deletedSessions.add(session.id);
 			}
 
@@ -517,7 +519,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 											${this.searchQuery ? "No matching sessions" : i18n("No sessions yet")}
 										</div>`
 									: filteredSessions.map((session) => {
-											const cost = session.usage.cost.total;
+											const usage = session.metadata?.usage;
 											return html`
 											<div
 												class="group flex items-start gap-3 p-4 rounded-lg border border-border hover:bg-secondary/50 cursor-pointer transition-colors"
@@ -533,7 +535,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 													<div class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
 														<span class="font-medium">${this.formatDate(session.lastModified)}</span>
 														<span>${session.messageCount} ${i18n("messages")}</span>
-														${this.claudeSessionIds.has(session.id) ? html`<span>Claude Code subscription</span>` : html`<span>${formatUsage(session.usage)}</span><span class="font-semibold ${cost > 0.01 ? "text-orange-500" : "text-green-600"}">$${cost.toFixed(4)}</span>`}
+														${usage ? html`<span>${formatUsage(usage)}</span><span class="font-semibold ${usage.cost.total > 0.01 ? "text-orange-500" : "text-green-600"}">$${usage.cost.total.toFixed(4)}</span>` : html`<span>Claude Code subscription</span>`}
 													</div>
 
 													<!-- Preview text - always show if available -->

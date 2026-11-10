@@ -85,6 +85,10 @@ export async function allOwnedTabIds(): Promise<Set<number>> {
 	return ids;
 }
 
+export function isPanelSession(session: { id: string; homeTabId?: number }): boolean {
+	return !session.id.startsWith("bridge-") || session.homeTabId !== undefined;
+}
+
 /** Find the session that owns a tab, if any. */
 export async function sessionOwningTab(tabId: number): Promise<PersistedSession | undefined> {
 	const table = await readTable();
@@ -165,7 +169,7 @@ export async function pruneSessions(
 			state.currentTabId = state.tabIds[state.tabIds.length - 1];
 		if (state.homeTabId !== undefined && !liveTabs.has(state.homeTabId)) state.homeTabId = undefined;
 		const isBridge = state.id.startsWith("bridge-");
-		if (isBridge && state.homeTabId === undefined && !liveIds.has(state.id)) {
+		if (!isPanelSession(state) && !liveIds.has(state.id)) {
 			for (const id of [...state.tabIds]) {
 				const tab = liveTabs.get(id);
 				if (!tab || !isBlankUrl(tab.url ?? tab.pendingUrl) || tab.active) continue;

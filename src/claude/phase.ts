@@ -1,9 +1,16 @@
-import type { ChatPhase, ClaudeHostEvent, ClaudeToolPhase } from "./protocol.js";
+import type { Static } from "@sinclair/typebox";
+import type { ClaudeFailure, ClaudeHostEvent } from "./protocol.js";
+import type { LogItem } from "./schema.js";
 
-export type ClaudeLogItem =
-	| { kind: "user"; text: string }
-	| { kind: "assistant"; messageId: string; text: string }
-	| { kind: "tool"; toolUseId: string; name: string; phase: ClaudeToolPhase; detail?: string };
+export type ClaudeLogItem = Static<typeof LogItem>;
+
+export type ChatPhase =
+	| { kind: "closed" }
+	| { kind: "starting" }
+	| { kind: "ready" }
+	| { kind: "turn" }
+	| { kind: "handedOff"; resumeCommand: string }
+	| { kind: "failed"; reason: ClaudeFailure; message: string };
 
 export interface ClaudeChatState {
 	phase: ChatPhase;

@@ -5,12 +5,14 @@ import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { MAX_FRAME_TO_EXTENSION, MAX_FRAME_FROM_EXTENSION } from "../../src/bridge/protocol.ts";
-import type { ClaudeHostEvent, PanelToClaudeHost } from "../../src/claude/protocol.ts";
+import { CLAUDE_CLIENT_NAME, type ClaudeHostEvent, type PanelToClaudeHost } from "../../src/claude/protocol.ts";
 import { claudeFailure, createClaudeStream } from "./claude-stream.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { findProfileByMarker, resolveProfile, sameProfile } from "./profiles.ts";
 
-const panelSchema = z.discriminatedUnion("type", [
+type Start = Extract<PanelToClaudeHost, { type: "start" }>;
+
+const panelSchema: z.ZodType<PanelToClaudeHost> = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("start"),
 		sessionId: z.string().uuid(),
@@ -22,12 +24,7 @@ const panelSchema = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("interrupt") }),
 	z.object({ type: z.literal("end") }),
 ]);
-const initSchema = z.object({
-	type: z.literal("system"),
-	subtype: z.literal("init"),
-	cwd: z.string(),
-	session_id: z.string(),
-});
+const initSchema = z.object({ type: z.literal("system"), subtype: z.literal("init") });
 const initializedSchema = z.object({
 	type: z.literal("control_response"),
 	response: z.object({ subtype: z.literal("success"), request_id: z.literal("sitegeist-initialize") }),
@@ -37,9 +34,46 @@ function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function claudeArgs(start: Start): string[] {
+	const mcpEnv: Record<string, string> = { SITEGEIST_CLIENT_NAME: CLAUDE_CLIENT_NAME, SITEGEIST_SESSION: start.sessionId };
+	if (start.profileMarker) {
+		const profile = findProfileByMarker(start.profileMarker);
+		if (!profile) throw new Error("Could not find the browser profile for this panel");
+		const selector = `${profile.browser}/${profile.directory}`;
+		if (!sameProfile(profile, resolveProfile(selector))) throw new Error("Browser profile selector did not round trip");
+		mcpEnv.SITEGEIST_PROFILE = selector;
+	}
+	const config = {
+		mcpServers: { sitegeist: { command: process.execPath, args: [process.argv[1], "mcp"], env: mcpEnv } },
+	};
+	const prompt = `The user is chatting from the Sitegeist side panel. Their page is ${start.pageUrl ?? "the current browser page"}. That tab is already your current Sitegeist tab: read it with read_page or get_page_text without navigating. Answer in the user's language.`;
+	return [
+		"-p",
+		"--input-format",
+		"stream-json",
+		"--output-format",
+		"stream-json",
+		"--verbose",
+		"--include-partial-messages",
+		start.resume ? "--resume" : "--session-id",
+		start.sessionId,
+		"--strict-mcp-config",
+		"--mcp-config",
+		JSON.stringify(config),
+		"--tools",
+		"",
+		"--allowedTools",
+		"mcp__sitegeist",
+		"--permission-mode",
+		"dontAsk",
+		"--append-system-prompt",
+		prompt,
+	];
+}
+
 export function runClaudeHost(): void {
 	const parser = new FrameParser(MAX_FRAME_FROM_EXTENSION);
-	let session: Extract<PanelToClaudeHost, { type: "start" }> | undefined;
+	let session: Start | undefined;
 	let active: ReturnType<typeof launch> | undefined;
 	let closed = false;
 	let commands = Promise.resolve();
@@ -56,7 +90,7 @@ export function runClaudeHost(): void {
 		process.stdout.write(frame);
 	}
 
-	function launch(start: Extract<PanelToClaudeHost, { type: "start" }>) {
+	function launch(start: Start) {
 		const executable = process.env.SITEGEIST_CLAUDE;
 		if (!executable || !isAbsolute(executable)) {
 			emit({
@@ -68,74 +102,23 @@ export function runClaudeHost(): void {
 		}
 		const cwd = join(homedir(), "sitegeist-chats");
 		mkdirSync(cwd, { recursive: true });
-		const mcpEnv: Record<string, string> = {};
-		if (start.profileMarker) {
-			const profile = findProfileByMarker(start.profileMarker);
-			if (!profile) throw new Error("Could not find the browser profile for this panel");
-			const selector = `${profile.browser}/${profile.directory}`;
-			if (!sameProfile(profile, resolveProfile(selector)))
-				throw new Error("Browser profile selector did not round trip");
-			mcpEnv.SITEGEIST_PROFILE = selector;
-		}
-		const config = {
-			mcpServers: { sitegeist: { command: process.execPath, args: [process.argv[1], "mcp"], env: mcpEnv } },
-		};
-		const prompt = `The user is chatting from the Sitegeist side panel. Their page is ${start.pageUrl ?? "the current browser page"}. That tab is already your current Sitegeist tab: read it with read_page or get_page_text without navigating. Answer in the user's language.`;
-		const child = spawn(
-			executable,
-			[
-				"-p",
-				"--input-format",
-				"stream-json",
-				"--output-format",
-				"stream-json",
-				"--verbose",
-				"--include-partial-messages",
-				start.resume ? "--resume" : "--session-id",
-				start.sessionId,
-				"--strict-mcp-config",
-				"--mcp-config",
-				JSON.stringify(config),
-				"--tools",
-				"",
-				"--allowedTools",
-				"mcp__sitegeist",
-				"--permission-mode",
-				"dontAsk",
-				"--append-system-prompt",
-				prompt,
-			],
-			{ cwd, stdio: ["pipe", "pipe", "pipe"] },
-		);
-		const state = {
-			child,
-			intentional: false,
-			reportedError: false,
-			ready: false,
-			stderr: "",
-			done: Promise.resolve(),
-		};
+		const child = spawn(executable, claudeArgs(start), { cwd, stdio: ["pipe", "pipe", "pipe"] });
+		const state = { child, intentional: false, reportedError: false, stderr: "", done: Promise.resolve() };
 		const translate = createClaudeStream();
-		const ready = (sessionId: string, directory: string) => {
-			if (state.ready) return;
-			state.ready = true;
-			emit({
-				type: "ready",
-				sessionId,
-				cwd: directory,
-				resumeCommand: `cd ${shellQuote(directory)} && claude --resume ${sessionId}`,
-			});
-		};
 		const lines = createInterface({ input: child.stdout });
 		lines.on("line", (line) => {
 			try {
 				const raw = JSON.parse(line);
-				const init = initSchema.safeParse(raw);
-				if (init.success) {
-					session = { ...start, resume: true };
-					ready(init.data.session_id, init.data.cwd);
+				if (initSchema.safeParse(raw).success) session = { ...start, resume: true };
+				if (initializedSchema.safeParse(raw).success) {
+					const directory = realpathSync(cwd);
+					emit({
+						type: "ready",
+						sessionId: start.sessionId,
+						cwd: directory,
+						resumeCommand: `cd ${shellQuote(directory)} && claude --resume ${start.sessionId}`,
+					});
 				}
-				if (initializedSchema.safeParse(raw).success) ready(start.sessionId, realpathSync(cwd));
 				for (const event of translate(line)) {
 					if (event.type === "error") state.reportedError = true;
 					emit(event);

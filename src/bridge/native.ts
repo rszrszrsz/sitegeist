@@ -10,6 +10,7 @@
 import { stopScreencastsOwnedBy } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, NoTabError, pruneSessions } from "../browser/session.js";
+import { claudeSessionKey } from "../claude/storage.js";
 import {
 	addPendingRequest,
 	allowHost,
@@ -32,6 +33,7 @@ import {
 	type HostToExt,
 	NATIVE_HOST_NAME,
 	PROTOCOL_VERSION,
+	sessionIdFor,
 } from "./protocol.js";
 import { BridgeError, type HandlerContext, handlers } from "./tools.js";
 
@@ -89,8 +91,8 @@ const clients = new Map<string, ClientState>();
 const pendingDecisions = new Map<string, (decision: PermissionDecision) => void>();
 const inlinePermissionSessions = new Map<chrome.runtime.Port, string>();
 
-export function attachClaudePanel(panel: chrome.runtime.Port, sessionId: string): void {
-	inlinePermissionSessions.set(panel, sessionIdFor({ name: "claude", session: sessionId }, sessionId));
+export function attachClaudePanel(panel: chrome.runtime.Port, chatId: string): void {
+	inlinePermissionSessions.set(panel, claudeSessionKey(chatId));
 	panel.onDisconnect.addListener(() => inlinePermissionSessions.delete(panel));
 }
 
@@ -100,12 +102,6 @@ function send(message: ExtToHost): void {
 	} catch (err) {
 		console.warn("[Bridge] post failed:", err);
 	}
-}
-
-export function sessionIdFor(client: HostClientConnected["client"], clientId: string): string {
-	const name = client.name.replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || "harness";
-	const key = client.session ? client.session.replace(/[^a-z0-9_-]/gi, "").slice(0, 64) : clientId;
-	return `bridge-${name}-${key}`;
 }
 
 async function getSession(state: ClientState): Promise<BrowserSession> {

@@ -8,10 +8,17 @@ import {
 	type PermissionDecision,
 	recordDecision,
 } from "../bridge/permissions.js";
-import { parseHostEvent } from "./events.js";
 import { type ClaudeAction, type ClaudeChatState, transition } from "./phase.js";
-import { CLAUDE_HOST_NAME, type PanelToClaudeHost } from "./protocol.js";
-import { type ClaudeChat, saveClaudeChat } from "./storage.js";
+import { CLAUDE_HOST_NAME, type ClaudeFailure, type PanelToClaudeHost } from "./protocol.js";
+import { parseHostEvent } from "./schema.js";
+import { type ClaudeChat, claudeSessionKey, saveClaudeChat } from "./storage.js";
+
+const failureHelp: Record<ClaudeFailure, string | undefined> = {
+	not_installed: "Run sitegeist install to set up Claude Code.",
+	not_logged_in: "Run claude in a terminal, then /login, and continue here.",
+	limit: "Claude has reached its usage limit. Try again when your limit resets.",
+	crashed: undefined,
+};
 
 @customElement("claude-chat-view")
 export class ClaudeChatView extends LitElement {
@@ -78,7 +85,8 @@ export class ClaudeChatView extends LitElement {
 	};
 
 	private async refreshPermissions(): Promise<void> {
-		this.pending = (await getPendingRequests()).filter((request) => request.sessionKey === this.chat?.sessionKey);
+		const sessionKey = this.chat && claudeSessionKey(this.chat.id);
+		this.pending = (await getPendingRequests()).filter((request) => request.sessionKey === sessionKey);
 	}
 
 	private apply(action: ClaudeAction): void {
@@ -96,11 +104,11 @@ export class ClaudeChatView extends LitElement {
 	private persist(): void {
 		clearTimeout(this.saveTimer);
 		this.saveTimer = undefined;
-		if (!this.chat) return;
 		const firstUser = this.chatState.items.find((item) => item.kind === "user");
+		if (!this.chat || !firstUser) return;
 		const snapshot: ClaudeChat = {
 			...this.chat,
-			title: firstUser?.text.slice(0, 80) || "Claude Code",
+			title: firstUser.text.slice(0, 80),
 			items: this.chatState.items,
 			resumeCommand: this.chatState.resumeCommand,
 			phase: this.chatState.phase.kind === "handedOff" ? "handedOff" : "closed",
@@ -119,9 +127,15 @@ export class ClaudeChatView extends LitElement {
 			if (!this.nativePort) throw new Error("Claude Code is disconnected");
 			this.nativePort.postMessage(message);
 		} catch {
-			this.queuedText = undefined;
+			this.drop(this.nativePort);
 			this.apply({ type: "disconnect", message: "Claude Code disconnected. Continue here to reconnect." });
 		}
+	}
+
+	private drop(native: chrome.runtime.Port | undefined): void {
+		this.nativePort = undefined;
+		this.queuedText = undefined;
+		native?.disconnect();
 	}
 
 	private async start(): Promise<void> {
@@ -129,13 +143,6 @@ export class ClaudeChatView extends LitElement {
 		this.notice = "";
 		this.apply({ type: "start" });
 		try {
-			const binding = await chrome.runtime.sendMessage({
-				type: "claude-bind",
-				sessionId: this.chat.id,
-				tabId: this.chat.homeTabId,
-			});
-			if (!binding || typeof binding.sessionKey !== "string") throw new Error("Could not bind the home tab");
-			this.chat = { ...this.chat, sessionKey: binding.sessionKey };
 			const tab = await chrome.tabs.get(this.chat.homeTabId);
 			const data = await chrome.storage.local.get("bridge_profile_marker");
 			const native = chrome.runtime.connectNative(CLAUDE_HOST_NAME);
@@ -152,32 +159,21 @@ export class ClaudeChatView extends LitElement {
 						this.queuedText = undefined;
 						this.sendTurn(text);
 					}
-					if (event.type === "error") {
-						this.queuedText = undefined;
-						this.nativePort = undefined;
-						native.disconnect();
-					}
-					if (event.type === "exited") {
-						this.nativePort = undefined;
-						native.disconnect();
-						if (this.chatState.phase.kind === "handedOff") void this.copyCommand();
-					}
+					if (event.type === "error" || event.type === "exited") this.drop(native);
+					if (event.type === "exited" && this.chatState.phase.kind === "handedOff") void this.copyCommand();
 				} catch {
 					this.apply({
 						type: "error",
 						reason: "crashed",
 						message: "Claude Code returned an invalid response. Run sitegeist install and try again.",
 					});
-					this.nativePort = undefined;
-					this.queuedText = undefined;
-					native.disconnect();
+					this.drop(native);
 				}
 			});
 			native.onDisconnect.addListener(() => {
 				const error = chrome.runtime.lastError?.message;
 				if (this.nativePort !== native) return;
-				this.nativePort = undefined;
-				this.queuedText = undefined;
+				this.drop(undefined);
 				this.apply({
 					type: "disconnect",
 					message: error ? "Run sitegeist install, then continue here." : undefined,
@@ -191,7 +187,7 @@ export class ClaudeChatView extends LitElement {
 				pageUrl: tab.url,
 			});
 		} catch {
-			this.queuedText = undefined;
+			this.drop(this.nativePort);
 			this.apply({
 				type: "error",
 				reason: "crashed",
@@ -252,16 +248,7 @@ export class ClaudeChatView extends LitElement {
 	protected override render() {
 		const phase = this.chatState.phase;
 		const busy = phase.kind === "turn" || phase.kind === "starting" || this.chatState.exitIntent !== null;
-		const failure =
-			phase.kind === "failed"
-				? phase.reason === "not_installed"
-					? "Run sitegeist install to set up Claude Code."
-					: phase.reason === "not_logged_in"
-						? "Run claude in a terminal, then /login, and continue here."
-						: phase.reason === "limit"
-							? "Claude has reached its usage limit. Try again when your limit resets."
-							: phase.message
-				: "";
+		const failure = phase.kind === "failed" ? (failureHelp[phase.reason] ?? phase.message) : "";
 		return html`
 			<div class="px-3 py-2 border-b border-border flex flex-wrap items-center gap-2 text-sm">
 				<span class="font-medium">Claude Code</span>

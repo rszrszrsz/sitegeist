@@ -1,6 +1,7 @@
-import { attachClaudePanel, sessionIdFor, startBridge, trace } from "./bridge/native.js";
+import { attachClaudePanel, startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
-import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
+import { BrowserSession, cleanupOrphanGroups, isPanelSession, listSessions } from "./browser/session.js";
+import { claudeSessionKey } from "./claude/storage.js";
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
 startForegroundGuard();
@@ -94,7 +95,7 @@ interface OwnedTab {
 async function ownedTabs(windowId: number): Promise<Map<number, OwnedTab>> {
 	const map = new Map<number, OwnedTab>();
 	for (const s of await listSessions()) {
-		if ((s.id.startsWith("bridge-") && s.homeTabId === undefined) || s.windowId !== windowId) continue;
+		if (!isPanelSession(s) || s.windowId !== windowId) continue;
 		const homeTabId = s.homeTabId ?? s.tabIds[0];
 		if (homeTabId === undefined) continue;
 		for (const tabId of s.tabIds) map.set(tabId, { sessionId: s.id, homeTabId });
@@ -255,11 +256,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	const { sessionId, tabId } = message;
 	void (async () => {
 		const tab = await chrome.tabs.get(tabId);
-		const key = sessionIdFor({ name: "claude", session: sessionId }, sessionId);
-		const session = await BrowserSession.open(key, "Claude Code", tab.windowId);
+		const session = await BrowserSession.open(claudeSessionKey(sessionId), "Claude Code", tab.windowId);
 		await session.setHomeTab(tabId);
 		if (!session.tabIds.includes(tabId)) await session.adopt(tabId, true);
-		sendResponse({ sessionKey: key });
+		sendResponse({ ok: true });
 	})().catch((error: unknown) => sendResponse({ error: String(error) }));
 	return true;
 });

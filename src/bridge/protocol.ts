@@ -127,6 +127,12 @@ export interface HostClientConnected {
 	client: ClientHello["client"];
 }
 
+export function sessionIdFor(client: HostClientConnected["client"], clientId: string): string {
+	const name = client.name.replace(/[^a-z0-9_-]/gi, "").slice(0, 32) || "harness";
+	const key = client.session ? client.session.replace(/[^a-z0-9_-]/gi, "").slice(0, 64) : clientId;
+	return `bridge-${name}-${key}`;
+}
+
 export interface HostClientDisconnected {
 	type: "client_disconnected";
 	clientId: string;

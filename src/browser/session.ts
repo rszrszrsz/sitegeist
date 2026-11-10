@@ -165,7 +165,7 @@ export async function pruneSessions(
 			state.currentTabId = state.tabIds[state.tabIds.length - 1];
 		if (state.homeTabId !== undefined && !liveTabs.has(state.homeTabId)) state.homeTabId = undefined;
 		const isBridge = state.id.startsWith("bridge-");
-		if (isBridge && !liveIds.has(state.id)) {
+		if (isBridge && state.homeTabId === undefined && !liveIds.has(state.id)) {
 			for (const id of [...state.tabIds]) {
 				const tab = liveTabs.get(id);
 				if (!tab || !isBlankUrl(tab.url ?? tab.pendingUrl) || tab.active) continue;

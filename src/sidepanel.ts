@@ -27,6 +27,8 @@ import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
 import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
 import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from "./browser/session.js";
+import { ClaudeChatView } from "./claude/ClaudeChatView.js";
+import { type ClaudeChat, listClaudeChats, loadClaudeChat, saveClaudeChat } from "./claude/storage.js";
 import { Toast } from "./components/Toast.js";
 import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
@@ -112,6 +114,8 @@ setAppStorage(storage);
 // ============================================================================
 let currentSessionId: string | undefined;
 let currentTitle = "";
+let claudeView: ClaudeChatView | undefined;
+let choosingBackend = false;
 let isEditingTitle = false;
 let agent: Agent;
 let chatPanel: ChatPanel;
@@ -831,7 +835,89 @@ const newSession = () => {
 // ============================================================================
 // RENDER
 // ============================================================================
+async function chooseBackend(backend: "pi" | "claude"): Promise<void> {
+	await chrome.storage.local.set({ chat_backend: backend });
+	const url = new URL(window.location.href);
+	url.search = "";
+	if (homeTabId !== undefined) url.searchParams.set("tabId", String(homeTabId));
+	url.searchParams.set("new", "true");
+	url.searchParams.set("backend", backend);
+	window.location.href = url.toString();
+}
+
+function backendPicker() {
+	return html`<select aria-label="Backend for a new chat" class="text-sm bg-background border border-border rounded px-2 py-1" .value=${claudeView ? "claude" : "pi"} @change=${(
+		event: Event,
+	) => {
+		if (event.target instanceof HTMLSelectElement && (event.target.value === "pi" || event.target.value === "claude"))
+			void chooseBackend(event.target.value);
+	}}><option value="pi">Sitegeist agent</option><option value="claude">Claude Code</option></select>`;
+}
+
+async function showClaudeChat(chat?: ClaudeChat): Promise<void> {
+	if (chat && (await chrome.tabs.get(chat.homeTabId).catch(() => undefined))) homeTabId = chat.homeTabId;
+	if (homeTabId === undefined) throw new Error("Open Claude Code from a browser tab");
+	if (!chat) {
+		const now = new Date().toISOString();
+		chat = {
+			id: crypto.randomUUID(),
+			sessionKey: "",
+			homeTabId,
+			title: "Claude Code",
+			createdAt: now,
+			lastModified: now,
+			items: [],
+			resumeCommand: "",
+			phase: "closed",
+		};
+	}
+	const binding = await chrome.runtime.sendMessage({ type: "claude-bind", sessionId: chat.id, tabId: homeTabId });
+	if (!binding || typeof binding.sessionKey !== "string") throw new Error("Could not bind the Claude home tab");
+	chat = { ...chat, homeTabId, sessionKey: binding.sessionKey };
+	await saveClaudeChat(chat);
+	currentSessionId = chat.id;
+	updateUrl(chat.id);
+	claudeView = new ClaudeChatView();
+	claudeView.initialize(chat, currentWindowId);
+	renderApp();
+}
+
 const renderApp = () => {
+	if (claudeView || choosingBackend) {
+		render(
+			html`<div class="w-full h-full flex flex-col bg-background text-foreground overflow-hidden">
+			<div class="border-b border-border flex flex-wrap items-center gap-2 px-3 py-2">
+				${Button({
+					variant: "ghost",
+					size: "sm",
+					children: icon(History, "sm"),
+					title: "Sessions",
+					onClick: () => {
+						void SitegeistSessionListDialog.open(loadSession, (id) => {
+							if (id === currentSessionId) newSession();
+						});
+					},
+				})}
+				${Button({ variant: "ghost", size: "sm", children: icon(Plus, "sm"), title: "New chat", onClick: newSession })}
+				${backendPicker()}
+				<theme-toggle></theme-toggle>
+				${Button({
+					variant: "ghost",
+					size: "sm",
+					children: icon(Settings, "sm"),
+					title: "Bridge settings",
+					onClick: () => {
+						SettingsDialog.open([new BridgeTab(), new AboutTab()]);
+					},
+				})}
+			</div>
+			${claudeView ?? html`<div class="p-4 space-y-4"><p>Choose how to start this chat.</p><div class="flex flex-wrap gap-2">${Button({ variant: "outline", children: "Sitegeist agent", onClick: () => void chooseBackend("pi") })}${Button({ children: "Claude Code", onClick: () => void chooseBackend("claude") })}</div><p class="text-sm text-muted-foreground">Claude Code uses the claude app you have signed in to on this computer.</p></div>`}
+		</div>`,
+			document.body,
+		);
+		return;
+	}
+
 	const appHtml = html`
 		<div class="w-full h-full flex flex-col bg-background text-foreground overflow-hidden">
 			<!-- Header -->
@@ -962,7 +1048,7 @@ const renderApp = () => {
 				</div>
 			</div>
 
-			<!-- Chat Panel -->
+			${!currentSessionId ? html`<div class="px-3 py-2 border-b border-border">${backendPicker()}</div>` : ""}
 			${chatPanel}
 		</div>
 	`;
@@ -1198,6 +1284,29 @@ async function initApp() {
 	const urlParams = new URLSearchParams(window.location.search);
 	let sessionIdFromUrl = urlParams.get("session");
 	const isNewSession = urlParams.get("new") === "true";
+
+	const claudeChats = await listClaudeChats();
+	const savedClaude = sessionIdFromUrl ? await loadClaudeChat(sessionIdFromUrl) : undefined;
+	const boundSession =
+		!sessionIdFromUrl && !isNewSession && homeTabId !== undefined ? await sessionIdForTab(homeTabId) : undefined;
+	const boundClaude = savedClaude ?? claudeChats.find((chat) => chat.sessionKey === boundSession);
+	if (boundClaude) {
+		await showClaudeChat(boundClaude);
+		return;
+	}
+	const preferences = await chrome.storage.local.get("chat_backend");
+	const backend = urlParams.get("backend") ?? preferences.chat_backend;
+	if (!sessionIdFromUrl && (isNewSession || !boundSession)) {
+		if (backend === "claude") {
+			await showClaudeChat();
+			return;
+		}
+		if (backend !== "pi") {
+			choosingBackend = true;
+			renderApp();
+			return;
+		}
+	}
 
 	if (!sessionIdFromUrl && !isNewSession && homeTabId !== undefined && storage.sessions) {
 		const boundId = await sessionIdForTab(homeTabId);

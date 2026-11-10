@@ -14,7 +14,11 @@ Bring your own API key or log in with an existing subscription (Anthropic Claude
 OpenAI/ChatGPT, GitHub Copilot, Google Gemini). Your data stays on your machine. Nothing
 is collected or tracked.
 
-This fork (0xSero/sitegeist) adds three things to upstream (badlogic/sitegeist):
+This is rszrszrsz/sitegeist, a fork of [0xSero/sitegeist](https://github.com/0xSero/sitegeist),
+which is itself a fork of [badlogic/sitegeist](https://github.com/badlogic/sitegeist) by Mario
+Zechner.
+
+0xSero/sitegeist adds four things to upstream:
 
 1. **Background operation.** Every chat owns its own tab group. Tabs open inactive, the
    agent acts on its own current tab, and it never sees or touches your other tabs.
@@ -26,6 +30,17 @@ This fork (0xSero/sitegeist) adds three things to upstream (badlogic/sitegeist):
    instead of a hardcoded table.
 4. **A harness bridge.** Claude Code, Codex, omp, pi, or any MCP client can drive the
    browser through Sitegeist, in the background, with no configuration.
+
+This fork adds on top of that:
+
+- **Browser profiles in the bridge.** The MCP server lists Chrome profiles and switches
+  between them (`profiles`, `profile_use`, `--profile`).
+- **A pi-mono fork.** The pi-mono changes Sitegeist depends on are commits on the
+  `sitegeist` branch of [rszrszrsz/pi-mono](https://github.com/rszrszrsz/pi-mono) instead
+  of edits in a local checkout. This restored the composer's slash-command menu, ArrowUp
+  prompt recall, thinking picker, and `compat.omitMaxTokens` for custom providers.
+- **Smaller fixes.** The native host keeps working after Node upgrades, the site approval
+  prompt defaults to "Allow once", and the pre-commit check runs from a fresh install.
 
 ## Install the extension
 
@@ -90,7 +105,7 @@ CLI commands: `mcp`, `install`, `status`, `profiles`, `allow <host>`, `yolo`, `a
 `reload`, `debug`, `pi-extension`. Use `--profile` with `allow`, `yolo`, `ask`,
 `reload` or `debug` to pick the profile. See `cli/README.md`.
 
-## What changed in this fork
+## What changed in 0xSero's fork
 
 Extension:
 

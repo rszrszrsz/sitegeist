@@ -137,7 +137,6 @@ export async function runMcpServer(): Promise<void> {
 	});
 
 	async function handlePermission(data: Record<string, unknown>): Promise<void> {
-		if (process.env.SITEGEIST_PERMISSIONS === "panel") return;
 		const requestId = String(data.requestId);
 		const host = String(data.host);
 		let decision: "allow_once" | "allow_host" | "deny" = "deny";

@@ -111,7 +111,6 @@ test(
 		assert.equal(launches[1].args[launches[1].args.indexOf("--resume") + 1], sessionId);
 		const config = JSON.parse(launches[0].args[launches[0].args.indexOf("--mcp-config") + 1]);
 		assert.equal(config.mcpServers.sitegeist.env.SITEGEIST_PROFILE, "Chrome/Profile 7");
-		assert.equal(config.mcpServers.sitegeist.env.SITEGEIST_PERMISSIONS, "panel");
 		assert.match(launches[0].args.at(-1), /https:\/\/example.org/);
 		assert.deepEqual(
 			h.events.filter((e) => e.type === "text").map((e) => e.delta),

@@ -68,7 +68,7 @@ export function runClaudeHost(): void {
 		}
 		const cwd = join(homedir(), "sitegeist-chats");
 		mkdirSync(cwd, { recursive: true });
-		const mcpEnv: Record<string, string> = { SITEGEIST_PERMISSIONS: "panel" };
+		const mcpEnv: Record<string, string> = {};
 		if (start.profileMarker) {
 			const profile = findProfileByMarker(start.profileMarker);
 			if (!profile) throw new Error("Could not find the browser profile for this panel");

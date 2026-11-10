@@ -211,6 +211,38 @@ async function shareActiveTab(): Promise<void> {
 	renderApp();
 }
 
+/**
+ * Slash-command provider for the chat input: lists skills (recordings included),
+ * site-scoped first, and inserts an @skill:<id> reference the agent retrieves.
+ */
+function buildSkillSlashProvider() {
+	return async (query: string) => {
+		let url: string | undefined;
+		try {
+			url = (await browserSession?.currentTab())?.url;
+		} catch {
+			/* ignore */
+		}
+		const all = await storage.skills.list();
+		const onSite = url ? await storage.skills.list(url) : [];
+		const onSiteNames = new Set(onSite.map((s) => s.name));
+		const ordered = [...onSite, ...all.filter((s) => !onSiteNames.has(s.name))];
+		const q = query.toLowerCase();
+		const filtered = q
+			? ordered.filter(
+					(s) => s.name.toLowerCase().includes(q) || (s.shortDescription || "").toLowerCase().includes(q),
+				)
+			: ordered;
+		return filtered.slice(0, 20).map((s) => ({
+			id: s.name,
+			title: s.name,
+			description: s.shortDescription,
+			hint: onSiteNames.has(s.name) ? "this site" : s.domainPatterns[0],
+			value: `@skill:${s.name}`,
+		}));
+	};
+}
+
 async function toggleRecording() {
 	if (isRecording && recorder) {
 		const current = recorder;
@@ -642,6 +674,15 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 					renderApp();
 				},
 				providers,
+				{
+					level: agent.state.thinkingLevel,
+					onChange: (level) => {
+						agent.setThinkingLevel(level);
+						chatPanel.agentInterface?.requestUpdate();
+						saveSession();
+						renderApp();
+					},
+				},
 			);
 		},
 		onBeforeSend: async () => {
@@ -728,6 +769,27 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	if (chatPanel.agentInterface) {
 		registerWelcomeRenderer(agent, chatPanel.agentInterface);
 
+		// Thinking level now lives inside the model picker, not as a separate
+		// dropdown in the input toolbar.
+		chatPanel.agentInterface.enableThinkingSelector = false;
+		// "/" in the chat input lists skills (recordings included) for the site.
+		chatPanel.agentInterface.slashCommandProvider = buildSkillSlashProvider();
+		// ArrowUp in an empty composer recalls the last prompt for editing or resending.
+		chatPanel.agentInterface.historyProvider = () => {
+			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
+				const m = agent.state.messages[i];
+				if (m.role !== "user") continue;
+				const text =
+					typeof m.content === "string"
+						? m.content
+						: m.content
+								.filter((c) => c.type === "text")
+								.map((c) => c.text)
+								.join("\n");
+				if (text.trim()) return text;
+			}
+			return undefined;
+		};
 		chatPanel.agentInterface.requestUpdate();
 
 		// Only disable auto-scroll for new sessions with welcome message

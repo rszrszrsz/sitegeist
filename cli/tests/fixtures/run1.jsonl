@@ -1,0 +1,11 @@
+{"type":"user","message":{"role":"user","content":"Remember the codeword kiwi. Reply only ok."},"isReplay":true}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_011CgugGDZ4VHycSSX8oZqR5"}}}
+{"type":"assistant","message":{"id":"msg_011CgugGDZ4VHycSSX8oZqR5","content":[{"type":"thinking"}]}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}}
+{"type":"assistant","message":{"id":"msg_011CgugGDZ4VHycSSX8oZqR5","content":[{"type":"text","text":"ok"}]}}
+{"permission_denials":[],"is_error":false,"subtype":"success","result":"ok","type":"result"}
+{"type":"user","message":{"role":"user","content":"What codeword did I ask you to remember? Reply only that word."},"isReplay":true}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_011CgugGPCjgTvS62dndUiXG"}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"kiwi"}}}
+{"type":"assistant","message":{"id":"msg_011CgugGPCjgTvS62dndUiXG","content":[{"type":"text","text":"kiwi"}]}}
+{"permission_denials":[],"is_error":false,"subtype":"success","result":"kiwi","type":"result"}

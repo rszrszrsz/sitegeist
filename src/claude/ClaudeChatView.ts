@@ -27,6 +27,7 @@ export class ClaudeChatView extends LitElement {
 	private chat?: ClaudeChat;
 	private windowId = 0;
 	private nativePort?: chrome.runtime.Port;
+	private permissionPort?: chrome.runtime.Port;
 	private saveQueue: Promise<void> = Promise.resolve();
 	private saveTimer?: ReturnType<typeof setTimeout>;
 	private queuedText?: string;
@@ -50,6 +51,7 @@ export class ClaudeChatView extends LitElement {
 	override connectedCallback(): void {
 		super.connectedCallback();
 		this.className = "flex flex-col flex-1 min-h-0";
+		if (this.chat) this.permissionPort = chrome.runtime.connect({ name: `claude-panel:${this.chat.id}` });
 		chrome.storage.onChanged.addListener(this.permissionsChanged);
 		window.addEventListener("pagehide", this.close);
 		void this.refreshPermissions();
@@ -66,6 +68,8 @@ export class ClaudeChatView extends LitElement {
 		this.persist();
 		this.nativePort?.disconnect();
 		this.nativePort = undefined;
+		this.permissionPort?.disconnect();
+		this.permissionPort = undefined;
 		void chrome.storage.session.remove(`sidepanel_busy_${this.windowId}`);
 	};
 

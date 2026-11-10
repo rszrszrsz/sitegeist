@@ -1,4 +1,4 @@
-import { sessionIdFor, startBridge, trace } from "./bridge/native.js";
+import { attachClaudePanel, sessionIdFor, startBridge, trace } from "./bridge/native.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
 
@@ -212,6 +212,11 @@ if (chrome.runtime.onUserScriptMessage) {
 
 // Track which windows currently have an open panel document (for the keyboard toggle).
 chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
+	const claude = /^claude-panel:([a-f0-9-]{36})$/i.exec(port.name);
+	if (claude) {
+		attachClaudePanel(port, claude[1]);
+		return;
+	}
 	const match = /^sidepanel:(\d+)$/.exec(port.name);
 	if (!match) return;
 	const windowId = Number(match[1]);

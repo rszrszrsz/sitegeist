@@ -28,6 +28,9 @@ test("the installed host survives replacing Node behind its PATH symlink", { ski
 	const result = spawnSync(join(root, "home", ".config", "sitegeist", "host"), [], { env, encoding: "utf8" });
 	assert.equal(result.status, 0, result.stderr);
 	assert.equal(result.stdout.trim(), "host");
+	const claudeResult = spawnSync(join(root, "home", ".config", "sitegeist", "claude-host"), [], { env, encoding: "utf8" });
+	assert.equal(claudeResult.status, 0, claudeResult.stderr);
+	assert.equal(claudeResult.stdout.trim(), "claude-host");
 });
 
 test("an outdated launcher is detected and repaired with an unchanged manifest", { skip: process.platform === "win32" }, (t) => {
@@ -38,7 +41,7 @@ test("an outdated launcher is detected and repaired with an unchanged manifest",
 	const script = join(root, "repair.mjs");
 	writeFileSync(script, `
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { install, isInstalled } from ${JSON.stringify(new URL("../src/install.ts", import.meta.url).href)};
 const { launcher } = install();
 assert.equal(isInstalled(), true);
@@ -48,6 +51,12 @@ assert.equal(isInstalled(), false, "obsolete launcher must trigger installation"
 if (!isInstalled()) install();
 assert.equal(isInstalled(), true);
 assert.equal(readFileSync(launcher, "utf8"), expected);
+const claudeManifest = install().skipped.find((file) => file.endsWith("ai.sitegeist.claude.json"));
+assert.ok(claudeManifest);
+unlinkSync(claudeManifest);
+assert.equal(isInstalled(), false, "existing users must install the Claude host manifest");
+install();
+assert.equal(isInstalled(), true);
 `);
 	execFileSync(process.execPath, [script], { env: { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, ".config") } });
 });

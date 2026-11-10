@@ -155,6 +155,7 @@ export async function runMcpServer(): Promise<void> {
 							title: "Decision",
 							enum: ["allow_host", "allow_once", "deny"],
 							enumNames: [`Allow ${host} from now on`, "Allow once", "Deny"],
+							default: "allow_once",
 						},
 					},
 					required: ["decision"],

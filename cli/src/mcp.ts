@@ -83,7 +83,7 @@ function harnessName(): string {
 function sessionKey(): string {
 	return (
 		process.env.SITEGEIST_SESSION ||
-		process.env.CLAUDE_SESSION_ID ||
+		process.env.CLAUDE_CODE_SESSION_ID ||
 		process.env.CODEX_THREAD_ID ||
 		process.env.OMP_SESSION_ID ||
 		process.env.PI_SESSION_ID ||

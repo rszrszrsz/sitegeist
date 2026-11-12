@@ -28,6 +28,7 @@
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- Foreground guard: tabs the user opens from a tab they are looking at (a shared agent tab) stay the user's; they used to join the agent's session and become its current tab, so the agent could read pages the user opened from there.
 - `read_console` no longer marks the tab as automated: it enables the Runtime domain only while reading and gets what the page logged since it loaded from Chrome's replay. Before, Runtime stayed on after the first call and deviceandbrowserinfo's `console.log(new Error())` trap flagged every later page in the tab (`isAutomatedWithCDP`).
 - The "Allow User Scripts" toggle works again: `userScripts` is a required permission instead of an optional one that nothing requested, so with the toggle on, in-page scripts run in the isolated userScripts world instead of the page's main world through the debugger.
 - Slash-command skills, ArrowUp prompt recall, the thinking picker and `compat.omitMaxTokens` work again. Their pi-mono changes had existed only in an uncommitted local checkout; they now live on the `sitegeist` branch of the pi-mono fork.

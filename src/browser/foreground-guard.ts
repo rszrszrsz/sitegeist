@@ -30,13 +30,17 @@ async function onNewTab(tabId: number, sourceTabId: number, via: string): Promis
 	const tab = await chrome.tabs.get(tabId).catch(() => undefined);
 	if (!tab) return;
 
-	// Restore whatever the user had active in that window before this tab appeared, but only
-	// when the agent opened it from a hidden tab. If the user is looking at the opener (they
-	// clicked a link on a shared tab themselves), the new tab is theirs to see.
 	const now = activeTab.get(tab.windowId);
 	const userWasOn = now === tabId ? previousActiveTab.get(tab.windowId) : now;
+	if (userWasOn === sourceTabId) {
+		if (owner.groupId !== undefined && tab.groupId === owner.groupId)
+			await chrome.tabs.ungroup(tabId).catch(() => undefined);
+		guardLog(`user tab=${tabId} from=${sourceTabId} stays the user's`);
+		return;
+	}
+	// Restore whatever the user had active in that window before this tab appeared.
 	let restored = false;
-	if (tab.active && userWasOn !== sourceTabId) {
+	if (tab.active) {
 		const previous = await chrome.tabs.query({ windowId: tab.windowId });
 		// The tab active right before the popup is what the user was looking at; lastActive is
 		// the fallback (it can already point at the popup, which is not owned when activated).

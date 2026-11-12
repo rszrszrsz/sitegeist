@@ -24,6 +24,7 @@
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- The "Allow User Scripts" toggle works again: `userScripts` is a required permission instead of an optional one that nothing requested, so with the toggle on, in-page scripts run in the isolated userScripts world instead of the page's main world through the debugger.
 - Slash-command skills, ArrowUp prompt recall, the thinking picker and `compat.omitMaxTokens` work again. Their pi-mono changes had existed only in an uncommitted local checkout; they now live on the `sitegeist` branch of the pi-mono fork.
 - Native host launchers prefer a Node symlink from `PATH` over a version-specific executable path. MCP startup detects and repairs outdated launchers after CLI or Node updates.
 - Profile switching cancels superseded connection attempts and retries; concurrent calls share their handshake, stale socket events cannot disrupt the selected profile, and bridge discovery has a bounded handshake wait. Invalid CLI profile flags fail instead of silently selecting the newest bridge.

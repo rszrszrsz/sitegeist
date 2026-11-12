@@ -18,6 +18,9 @@
 
 ### Changed
 - Input looks human to behavioral bot detection: the pointer travels along an eased curve from its last position, clicks hold the button and land off-center within the element, keys are held with varied gaps, carry real `code`/`keyCode`, and shifted characters press Shift. deviceandbrowserinfo.com's login test went from `superHumanSpeed` and `suspiciousClientSideBehavior` to clean in 3 of 3 runs. Clicks take about 0.3 to 0.6 s longer and `type` about 120 ms per character.
+- Scrolling is a wheel gesture: `scroll` (by dx/dy, to top/bottom, to an element) and reaching an off-screen element before a click, `type` or hover move the pointer over the scroll area and swipe with `Input.synthesizeScrollGesture`, where pages used to see a bare `scroll` event. Pages get a run of `wheel` events with trackpad-like deltas and one `scrollend` per swipe; long distances take up to 4 swipes (about 4.5 s to the bottom of a long page). Elements already in view are no longer re-centered. The old jump remains when no point in view scrolls the right container (an off-screen inner scroller, a frame under the pointer). A swipe the page does not render (minimized window) fails with an error after a timeout.
+- The side-panel REPL overlay lives in a closed shadow root: pages see an empty host element instead of `#sitegeist-repl-overlay` and a stylesheet of `sitegeist-*` animations.
+- The `fill` tool description tells models that it sends no key events and to use `type` on watched forms.
 - `navigate` gained `showTab` and `closeTab`; `switchToTab` no longer focuses the tab.
 - Composer: ArrowUp in an empty composer recalls the last prompt (pi-web-ui `MessageEditor`/`AgentInterface`, see README). The provider/auth label was removed from the header.
 - Browser sessions persist in `chrome.storage.local` (they and their groups survive extension reloads), grouping retries when Chromium refuses a tab edit, and the panel adopts the tab it opens on even when that is a New Tab page.
@@ -25,6 +28,7 @@
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- `read_console` no longer marks the tab as automated: it enables the Runtime domain only while reading and gets what the page logged since it loaded from Chrome's replay. Before, Runtime stayed on after the first call and deviceandbrowserinfo's `console.log(new Error())` trap flagged every later page in the tab (`isAutomatedWithCDP`).
 - The "Allow User Scripts" toggle works again: `userScripts` is a required permission instead of an optional one that nothing requested, so with the toggle on, in-page scripts run in the isolated userScripts world instead of the page's main world through the debugger.
 - Slash-command skills, ArrowUp prompt recall, the thinking picker and `compat.omitMaxTokens` work again. Their pi-mono changes had existed only in an uncommitted local checkout; they now live on the `sitegeist` branch of the pi-mono fork.
 - Native host launchers prefer a Node symlink from `PATH` over a version-specific executable path. MCP startup detects and repairs outdated launchers after CLI or Node updates.

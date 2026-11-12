@@ -224,25 +224,25 @@ export async function captureScreenshot(
 		if (format === "jpeg") params.quality = options.quality ?? 75;
 		return (await send<{ data: string }>(tabId, "Page.captureScreenshot", params)).data;
 	};
+	const data = await deadline(
+		capture(),
+		timeoutMs,
+		`Screenshot timed out after ${Math.round(timeoutMs / 1000)} s: the browser did not paint this background tab. ` +
+			"Read the page with read_page / get_page_text instead, or retry.",
+	);
+	const mimeType = format === "png" ? "image/png" : "image/jpeg";
+	const img = await resizeImage(data, mimeType, options.maxWidth ?? Math.min(css.width, 1280));
+	if (!options.clip && !options.fullPage && img.width > 0) screenshotScale.set(tabId, css.width / img.width);
+	return { ...img, cssWidth: Math.round(css.width), cssHeight: Math.round(css.height) };
+}
+
+async function deadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	const timeout = new Promise<never>((_, reject) => {
-		timer = setTimeout(
-			() =>
-				reject(
-					new Error(
-						`Screenshot timed out after ${Math.round(timeoutMs / 1000)} s: the browser did not paint this background tab. ` +
-							"Read the page with read_page / get_page_text instead, or retry.",
-					),
-				),
-			timeoutMs,
-		);
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error(message)), ms);
 	});
 	try {
-		const data = await Promise.race([capture(), timeout]);
-		const mimeType = format === "png" ? "image/png" : "image/jpeg";
-		const img = await resizeImage(data, mimeType, options.maxWidth ?? Math.min(css.width, 1280));
-		if (!options.clip && !options.fullPage && img.width > 0) screenshotScale.set(tabId, css.width / img.width);
-		return { ...img, cssWidth: Math.round(css.width), cssHeight: Math.round(css.height) };
+		return await Promise.race([work, late]);
 	} finally {
 		clearTimeout(timer);
 	}
@@ -366,8 +366,35 @@ async function moveMouse(
 	pointers.set(tabId, { x, y });
 }
 
+export function pointerAt(tabId: number): { x: number; y: number } | undefined {
+	return pointers.get(tabId);
+}
+
 export async function scroll(tabId: number, x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
-	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX, deltaY });
+	await moveMouse(tabId, x, y);
+	await sleep(between(60, 160));
+	const swipes = Math.min(4, Math.ceil(Math.hypot(deltaX, deltaY) / 1500));
+	for (let i = 0; i < swipes; i++) {
+		if (i > 0) await sleep(between(180, 400));
+		await swipe(tabId, x, y, deltaX / swipes, deltaY / swipes);
+	}
+}
+
+async function swipe(tabId: number, x: number, y: number, dx: number, dy: number): Promise<void> {
+	const distance = Math.hypot(dx, dy);
+	const speed = Math.round(Math.min(3000, Math.max(400, distance * between(1, 1.4))));
+	await deadline(
+		send(tabId, "Input.synthesizeScrollGesture", {
+			x,
+			y,
+			xDistance: -dx,
+			yDistance: -dy,
+			speed,
+			gestureSourceType: "mouse",
+		}),
+		(distance / speed) * 1000 + 5000,
+		"The page did not render the scroll gesture (is its window minimized?). Retry, or read it with read_page.",
+	);
 }
 
 /** Type text as key events (works in inputs, contenteditable, and for shortcuts). */
@@ -583,7 +610,7 @@ function installCaptureListener(): void {
 			if (!buf) return;
 			const args = (p.args as Array<{ value?: unknown; description?: string }>) ?? [];
 			const text = args.map((a) => (a.value !== undefined ? String(a.value) : (a.description ?? ""))).join(" ");
-			buf.push({ level: String(p.type ?? "log"), text, timestamp: Date.now() });
+			buf.push({ level: String(p.type ?? "log"), text, timestamp: eventTime(p) });
 			if (buf.length > MAX_ENTRIES) buf.splice(0, buf.length - MAX_ENTRIES);
 		} else if (method === "Runtime.exceptionThrown") {
 			const buf = consoleBuffers.get(tabId);
@@ -592,7 +619,7 @@ function installCaptureListener(): void {
 			buf.push({
 				level: "error",
 				text: details?.exception?.description ?? details?.text ?? "Uncaught exception",
-				timestamp: Date.now(),
+				timestamp: eventTime(p),
 			});
 		} else if (method === "Network.requestWillBeSent") {
 			const buf = networkBuffers.get(tabId);
@@ -616,25 +643,51 @@ function installCaptureListener(): void {
 			if (entry) entry.failed = String(p.errorText ?? "failed");
 		}
 	});
+	chrome.debugger.onDetach.addListener((source) => {
+		if (source.tabId === undefined) return;
+		runtimeHeld.delete(source.tabId);
+		consoleBuffers.delete(source.tabId);
+	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
+		runtimeHeld.delete(tabId);
 		consoleBuffers.delete(tabId);
+		consoleClearedAt.delete(tabId);
 		networkBuffers.delete(tabId);
 	});
 }
 
-/** Start buffering console output for a tab (no-op if already on). */
-export async function enableConsoleCapture(tabId: number): Promise<void> {
+const eventTime = (p: Record<string, unknown>) => (typeof p.timestamp === "number" ? p.timestamp : Date.now());
+
+const runtimeHeld = new Set<number>();
+const consoleClearedAt = new Map<number, number>();
+
+export async function holdRuntime(tabId: number): Promise<void> {
 	installCaptureListener();
-	if (consoleBuffers.has(tabId)) return;
-	consoleBuffers.set(tabId, []);
+	if (!consoleBuffers.has(tabId)) consoleBuffers.set(tabId, []);
+	runtimeHeld.add(tabId);
 	await cdpSend(tabId, "Runtime.enable");
 }
 
-export function readConsole(tabId: number, clear = false): ConsoleEntry[] {
-	const buf = consoleBuffers.get(tabId) ?? [];
-	const out = [...buf];
-	if (clear) buf.length = 0;
-	return out;
+export async function readConsole(tabId: number, clear = false): Promise<ConsoleEntry[]> {
+	installCaptureListener();
+	const entries = runtimeHeld.has(tabId) ? [...(consoleBuffers.get(tabId) ?? [])] : await replayConsole(tabId);
+	const since = consoleClearedAt.get(tabId) ?? 0;
+	if (clear) consoleClearedAt.set(tabId, Date.now());
+	return entries.filter((e) => e.timestamp > since);
+}
+
+async function replayConsole(tabId: number): Promise<ConsoleEntry[]> {
+	const entries: ConsoleEntry[] = [];
+	consoleBuffers.set(tabId, entries);
+	try {
+		await cdpSend(tabId, "Runtime.enable");
+	} finally {
+		if (!runtimeHeld.has(tabId)) {
+			consoleBuffers.delete(tabId);
+			await cdpSend(tabId, "Runtime.disable").catch(() => undefined);
+		}
+	}
+	return [...entries];
 }
 
 export async function enableNetworkCapture(tabId: number): Promise<void> {

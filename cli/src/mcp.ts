@@ -399,7 +399,8 @@ export async function runMcpServer(): Promise<void> {
 	server.registerTool(
 		"fill",
 		{
-			description: "Set a form control's value directly (inputs, textareas, selects, checkboxes, contenteditable).",
+			description:
+				"Set a form control's value directly (inputs, textareas, selects, checkboxes, contenteditable). No key or mouse events: sites that watch typing (logins, sign-ups, checkouts) see the value appear from nowhere, so use type there.",
 			inputSchema: { value: z.string(), tabId, ref: z.string().optional(), selector: z.string().optional() },
 		},
 		(args) => call("fill", args),
@@ -489,7 +490,7 @@ export async function runMcpServer(): Promise<void> {
 	server.registerTool(
 		"read_console",
 		{
-			description: "Console messages captured on the tab since capture started (first call starts capture).",
+			description: "Console messages and uncaught errors of the page since it loaded.",
 			inputSchema: { tabId, onlyErrors: z.boolean().optional(), pattern: z.string().optional(), clear: z.boolean().optional(), limit: z.number().int().optional() },
 		},
 		(args) => call("console.read", args),

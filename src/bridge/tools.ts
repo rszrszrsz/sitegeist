@@ -9,10 +9,10 @@ import {
 	scroll as cdpScroll,
 	click,
 	drag,
-	enableConsoleCapture,
 	enableNetworkCapture,
 	evaluateMain,
 	hover,
+	pointerAt,
 	pressKey,
 	readConsole,
 	readNetwork,
@@ -30,8 +30,11 @@ import {
 	navigateTabDetailed,
 	pageHtml,
 	pageText,
-	runInPage,
+	planWheel,
+	type ScrollTarget,
 	scrollPage,
+	scrollPosition,
+	settleScroll,
 	snapshot,
 	waitFor,
 	waitForLoad,
@@ -119,7 +122,22 @@ async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Pr
 	if (x !== undefined && y !== undefined) return screenshotToCss(tabId, { x, y });
 	const t = target(params);
 	if (!t.ref && !t.selector) throw new BridgeError(ERR.BAD_PARAMS, "Provide ref, selector, or x and y");
-	return somewhereIn(await locate(tabId, t));
+	return somewhereIn(await reach(tabId, t));
+}
+
+async function wheelScroll(tabId: number, target: ScrollTarget): Promise<boolean> {
+	const plan = await planWheel(tabId, target, pointerAt(tabId));
+	if (!plan) return false;
+	if (plan.dx || plan.dy) {
+		await cdpScroll(tabId, plan.x, plan.y, plan.dx, plan.dy);
+		await settleScroll(tabId);
+	}
+	return true;
+}
+
+async function reach(tabId: number, t: { ref?: string; selector?: string }) {
+	await wheelScroll(tabId, t);
+	return locate(tabId, t);
 }
 
 function somewhereIn(rect: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
@@ -324,7 +342,7 @@ export const handlers: Record<string, Handler> = {
 		const tabId = await resolveTab(ctx, params, true);
 		const t = target(params);
 		if (t.ref || t.selector) {
-			const point = somewhereIn(await locate(tabId, t));
+			const point = somewhereIn(await reach(tabId, t));
 			await click(tabId, point.x, point.y);
 		}
 		await typeText(tabId, text);
@@ -350,16 +368,15 @@ export const handlers: Record<string, Handler> = {
 			// Wheel at a point: scrolls the innermost scrollable under the cursor.
 			const at = screenshotToCss(tabId, { x, y });
 			await cdpScroll(tabId, at.x, at.y, dx, dy);
-			return runInPage(tabId, "({ scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) })");
+			await settleScroll(tabId);
+			return scrollPosition(tabId);
 		}
 		const to = str(params, "to");
-		return scrollPage(tabId, {
-			dx,
-			dy,
-			ref: str(params, "ref"),
-			selector: str(params, "selector"),
-			to: to === "top" || to === "bottom" ? to : undefined,
-		});
+		const t = target(params);
+		const scrollTarget: ScrollTarget = { dx, dy, ...t, to: to === "top" || to === "bottom" ? to : undefined };
+		if (t.ref || t.selector) await reach(tabId, t);
+		else if (!(await wheelScroll(tabId, scrollTarget))) await scrollPage(tabId, scrollTarget);
+		return scrollPosition(tabId);
 	},
 
 	fill: async (ctx, params) => {
@@ -435,8 +452,7 @@ export const handlers: Record<string, Handler> = {
 
 	"console.read": async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
-		await enableConsoleCapture(tabId);
-		let entries = readConsole(tabId, params.clear === true);
+		let entries = await readConsole(tabId, params.clear === true);
 		if (params.onlyErrors === true) entries = entries.filter((e) => e.level === "error");
 		const pattern = str(params, "pattern");
 		if (pattern) {

@@ -366,21 +366,110 @@ export async function snapshot(
 	);
 }
 
+const SCROLL_HELPERS = `
+	const root = document.scrollingElement || document.documentElement;
+	const scrolls = (n) => {
+		if (n === root) return true;
+		if (n === document.body || n === document.documentElement) return false;
+		const s = getComputedStyle(n);
+		return (/(auto|scroll|overlay)/.test(s.overflowY) && n.scrollHeight > n.clientHeight) ||
+			(/(auto|scroll|overlay)/.test(s.overflowX) && n.scrollWidth > n.clientWidth);
+	};
+	const scrollerOf = (n) => { for (; n; n = n.parentElement) if (scrolls(n)) return n; return root; };
+	const visibleBox = (container) => {
+		const c = container === root ? { left: 0, top: 0, right: innerWidth, bottom: innerHeight } : container.getBoundingClientRect();
+		return { left: Math.max(c.left, 0), top: Math.max(c.top, 0), right: Math.min(c.right, innerWidth), bottom: Math.min(c.bottom, innerHeight) };
+	};
+`;
+
+const FIND_TARGET = `
+	const findTarget = (ref, sel) => {
+		let el = null;
+		if (ref) el = window.__sitegeistRefs ? window.__sitegeistRefs.get(ref) : null;
+		if (!el && sel) el = document.querySelector(sel);
+		if (!el) throw new Error(ref ? "Ref " + ref + " not found; take a new snapshot" : "Selector not found: " + sel);
+		if (!el.isConnected) throw new Error("Element is no longer in the page; take a new snapshot");
+		return el;
+	};
+`;
+
+export interface ScrollTarget {
+	dx?: number;
+	dy?: number;
+	ref?: string;
+	selector?: string;
+	to?: "top" | "bottom";
+}
+
+export async function planWheel(
+	tabId: number,
+	target: ScrollTarget,
+	pointer?: { x: number; y: number },
+): Promise<{ x: number; y: number; dx: number; dy: number } | null> {
+	const code = `(() => {
+		${FIND_TARGET}
+		${SCROLL_HELPERS}
+		const o =${JSON.stringify(target)};
+		const pointer = ${JSON.stringify(pointer ?? null)};
+		const el = o.ref || o.selector ? findTarget(o.ref, o.selector) : null;
+		const container = el ? scrollerOf(el.parentElement) : root;
+		const box = visibleBox(container);
+		if (box.right - box.left < 20 || box.bottom - box.top < 20) return null;
+		let dx = 0, dy = 0;
+		if (el) {
+			const r = el.getBoundingClientRect();
+			if (r.left < box.left || r.right > box.right) dx = (r.left + r.right - box.left - box.right) / 2;
+			if (r.top < box.top || r.bottom > box.bottom) dy = (r.top + r.bottom - box.top - box.bottom) / 2;
+		} else if (o.to === "top") dy = -container.scrollTop;
+		else if (o.to === "bottom") dy = container.scrollHeight - container.clientHeight - container.scrollTop;
+		else { dx = o.dx || 0; dy = o.dy || 0; }
+		dx = Math.max(-container.scrollLeft, Math.min(dx, container.scrollWidth - container.clientWidth - container.scrollLeft));
+		dy = Math.max(-container.scrollTop, Math.min(dy, container.scrollHeight - container.clientHeight - container.scrollTop));
+		if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return { x: 0, y: 0, dx: 0, dy: 0 };
+		const w = box.right - box.left, h = box.bottom - box.top;
+		const points = pointer ? [pointer] : [];
+		for (const fy of [0.5, 0.35, 0.65, 0.2, 0.8])
+			for (const fx of [0.5, 0.3, 0.7])
+				points.push({ x: box.left + w * (fx + (Math.random() - 0.5) * 0.1), y: box.top + h * (fy + (Math.random() - 0.5) * 0.1) });
+		for (const p of points) {
+			if (p.x < box.left || p.x >= box.right || p.y < box.top || p.y >= box.bottom) continue;
+			const hit = document.elementFromPoint(p.x, p.y);
+			if (!hit || /^(IFRAME|FRAME|EMBED|OBJECT)$/.test(hit.tagName)) continue;
+			if (scrollerOf(hit) === container) return { x: p.x, y: p.y, dx, dy };
+		}
+		return null;
+	})()`;
+	return runInPage(tabId, code);
+}
+
+export async function settleScroll(tabId: number): Promise<void> {
+	await runInPage(
+		tabId,
+		`new Promise((done) => {
+			let quiet;
+			const finish = () => { removeEventListener("scroll", restart, true); clearTimeout(quiet); clearTimeout(cap); done(true); };
+			const restart = () => { clearTimeout(quiet); quiet = setTimeout(finish, 150); };
+			const cap = setTimeout(finish, 1500);
+			addEventListener("scroll", restart, { capture: true, passive: true });
+			restart();
+		})`,
+	);
+}
+
 /** Resolve a ref (from a snapshot) or CSS selector to its viewport center. */
 export async function locate(
 	tabId: number,
 	target: { ref?: string; selector?: string },
 ): Promise<{ x: number; y: number; width: number; height: number }> {
 	const code = `(() => {
-		const refs = window.__sitegeistRefs;
-		let el = null;
-		const ref = ${JSON.stringify(target.ref ?? "")};
-		const sel = ${JSON.stringify(target.selector ?? "")};
-		if (ref) el = refs ? refs.get(ref) : null;
-		if (!el && sel) el = document.querySelector(sel);
-		if (!el) throw new Error(ref ? "Ref " + ref + " not found; take a new snapshot" : "Selector not found: " + sel);
-		if (!el.isConnected) throw new Error("Element is no longer in the page; take a new snapshot");
-		el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+		${FIND_TARGET}
+		${SCROLL_HELPERS}
+		const el = findTarget(${JSON.stringify(target.ref ?? "")}, ${JSON.stringify(target.selector ?? "")});
+		const shown = el.getBoundingClientRect();
+		const box = visibleBox(scrollerOf(el.parentElement));
+		const cx = shown.left + shown.width / 2, cy = shown.top + shown.height / 2;
+		if (cx < box.left || cx >= box.right || cy < box.top || cy >= box.bottom)
+			el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		const r = el.getBoundingClientRect();
 		return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
 	})()`;
@@ -394,13 +483,8 @@ export async function fillElement(
 	value: string,
 ): Promise<void> {
 	const code = `(() => {
-		const refs = window.__sitegeistRefs;
-		let el = null;
-		const ref = ${JSON.stringify(target.ref ?? "")};
-		const sel = ${JSON.stringify(target.selector ?? "")};
-		if (ref) el = refs ? refs.get(ref) : null;
-		if (!el && sel) el = document.querySelector(sel);
-		if (!el) throw new Error(ref ? "Ref " + ref + " not found; take a new snapshot" : "Selector not found: " + sel);
+		${FIND_TARGET}
+		const el = findTarget(${JSON.stringify(target.ref ?? "")}, ${JSON.stringify(target.selector ?? "")});
 		const value = ${JSON.stringify(value)};
 		el.focus();
 		if (el instanceof HTMLSelectElement) {
@@ -454,23 +538,24 @@ export async function pageHtml(tabId: number, selector?: string, maxChars = 2000
 	return runInPage<string>(tabId, code);
 }
 
-/** Scroll the page or an element; returns the new scroll position. */
 export async function scrollPage(
 	tabId: number,
-	options: { dx?: number; dy?: number; selector?: string; ref?: string; to?: "top" | "bottom" },
-): Promise<{ scrollX: number; scrollY: number; pageHeight: number }> {
+	options: { dx?: number; dy?: number; to?: "top" | "bottom" },
+): Promise<void> {
 	const code = `(() => {
 		const o = ${JSON.stringify(options)};
-		let target = null;
-		if (o.ref && window.__sitegeistRefs) target = window.__sitegeistRefs.get(o.ref);
-		if (!target && o.selector) target = document.querySelector(o.selector);
-		if (target) target.scrollIntoView({ block: "center", behavior: "instant" });
-		else if (o.to === "top") window.scrollTo(0, 0);
+		if (o.to === "top") window.scrollTo(0, 0);
 		else if (o.to === "bottom") window.scrollTo(0, document.documentElement.scrollHeight);
 		else window.scrollBy(o.dx || 0, o.dy || 0);
-		return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight };
 	})()`;
-	return runInPage(tabId, code);
+	await runInPage(tabId, code);
+}
+
+export async function scrollPosition(tabId: number): Promise<{ scrollX: number; scrollY: number; pageHeight: number }> {
+	return runInPage(
+		tabId,
+		"({ scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight })",
+	);
 }
 
 /** Wait until a selector appears, text is present, or the URL matches. */

@@ -15,7 +15,7 @@
  * Both paths run the same code; callers do not need to know which one is in use.
  */
 
-import { cdpSend, ensureAttached } from "./cdp.js";
+import { cdpSend, ensureAttached, holdRuntime } from "./cdp.js";
 
 interface UserScriptsApi {
 	configureWorld(config: { worldId: string; messaging?: boolean; csp?: string }): Promise<void>;
@@ -137,7 +137,7 @@ async function ensureBinding(tabId: number): Promise<void> {
 	installBindingListener();
 	await ensureAttached(tabId);
 	if (bindingReady.has(tabId)) return;
-	await cdpSend(tabId, "Runtime.enable");
+	await holdRuntime(tabId);
 	await cdpSend(tabId, "Runtime.addBinding", { name: BINDING }).catch(() => undefined);
 	bindingReady.add(tabId);
 }

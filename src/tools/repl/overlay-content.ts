@@ -5,14 +5,16 @@
 export function createOverlayScript(taskName: string): string {
 	return `
 (function() {
-	// Check if overlay already exists (prevent duplicates)
-	if (document.getElementById('sitegeist-repl-overlay')) {
+	if (window.__overlayHost?.isConnected) {
 		return;
 	}
 
-	// Create overlay container
+	const host = document.createElement('div');
+	host.style.cssText = 'all: initial';
+	const shadow = host.attachShadow({ mode: 'closed' });
+	window.__overlayHost = host;
+
 	const overlay = document.createElement('div');
-	overlay.id = 'sitegeist-repl-overlay';
 	overlay.style.cssText = \`
 		position: fixed;
 		top: 0;
@@ -237,22 +239,10 @@ export function createOverlayScript(taskName: string): string {
 		abortBtn.style.background = 'rgba(239, 68, 68, 0.9)';
 	};
 	abortBtn.onclick = async () => {
-		console.log('[Overlay] Stop button clicked');
-		console.log('[Overlay] chrome.runtime:', chrome.runtime);
-		console.log('[Overlay] chrome.runtime.sendMessage:', chrome.runtime.sendMessage);
-		console.log('[Overlay] chrome.runtime.id:', chrome.runtime.id);
-
-		// Send message BEFORE removing overlay
 		try {
-			console.log('[Overlay] Calling sendMessage...');
-			const response = await chrome.runtime.sendMessage({ type: 'abort-repl' });
-			console.log('[Overlay] Got response:', response);
-		} catch (error) {
-			console.error('[Overlay] sendMessage failed:', error);
-		}
-
-		// Remove overlay after message sent
-		overlay.remove();
+			await chrome.runtime.sendMessage({ type: 'abort-repl' });
+		} catch {}
+		host.remove();
 	};
 
 	// Assemble toolbar
@@ -329,10 +319,8 @@ export function createOverlayScript(taskName: string): string {
 			}
 		}
 	\`;
-	document.head.appendChild(style);
-
-	// Inject into page
-	document.body.appendChild(overlay);
+	shadow.append(style, overlay);
+	document.documentElement.appendChild(host);
 })();
 `;
 }
@@ -343,10 +331,8 @@ export function createOverlayScript(taskName: string): string {
 export function removeOverlayScript(): string {
 	return `
 (function() {
-	const overlay = document.getElementById('sitegeist-repl-overlay');
-	if (overlay) {
-		overlay.remove();
-	}
+	window.__overlayHost?.remove();
+	window.__overlayHost = undefined;
 })();
 `;
 }

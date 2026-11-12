@@ -119,8 +119,12 @@ async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Pr
 	if (x !== undefined && y !== undefined) return screenshotToCss(tabId, { x, y });
 	const t = target(params);
 	if (!t.ref && !t.selector) throw new BridgeError(ERR.BAD_PARAMS, "Provide ref, selector, or x and y");
-	const rect = await locate(tabId, t);
-	return { x: rect.x, y: rect.y };
+	return somewhereIn(await locate(tabId, t));
+}
+
+function somewhereIn(rect: { x: number; y: number; width: number; height: number }): { x: number; y: number } {
+	const offset = (size: number) => (Math.random() - 0.5) * Math.min(size * 0.6, 40);
+	return { x: rect.x + offset(rect.width), y: rect.y + offset(rect.height) };
 }
 
 /** One `actions` step as [handler, params]; accepts the spellings models reach for. */
@@ -320,8 +324,8 @@ export const handlers: Record<string, Handler> = {
 		const tabId = await resolveTab(ctx, params, true);
 		const t = target(params);
 		if (t.ref || t.selector) {
-			const rect = await locate(tabId, t);
-			await click(tabId, rect.x, rect.y);
+			const point = somewhereIn(await locate(tabId, t));
+			await click(tabId, point.x, point.y);
 		}
 		await typeText(tabId, text);
 		if (params.submit === true) await pressKey(tabId, "Enter");

@@ -17,6 +17,7 @@
 - Browser profiles: the native host identifies the profile it serves (the extension writes a marker to its storage; the host finds it in the profile's extension storage and reads name and account from `Local State`). MCP tools `profiles` and `profile_use` (switches profiles and opens a closed one), `SITEGEIST_PROFILE` to pin the MCP server, `sitegeist profiles`, profile in `sitegeist status`, and `--profile` for `allow`, `yolo`, `ask`, `reload`, `debug`.
 
 ### Changed
+- Input looks human to behavioral bot detection: the pointer travels along an eased curve from its last position, clicks hold the button and land off-center within the element, keys are held with varied gaps, carry real `code`/`keyCode`, and shifted characters press Shift. deviceandbrowserinfo.com's login test went from `superHumanSpeed` and `suspiciousClientSideBehavior` to clean in 3 of 3 runs. Clicks take about 0.3 to 0.6 s longer and `type` about 120 ms per character.
 - `navigate` gained `showTab` and `closeTab`; `switchToTab` no longer focuses the tab.
 - Composer: ArrowUp in an empty composer recalls the last prompt (pi-web-ui `MessageEditor`/`AgentInterface`, see README). The provider/auth label was removed from the header.
 - Browser sessions persist in `chrome.storage.local` (they and their groups survive extension reloads), grouping retries when Chromium refuses a tab edit, and the panel adopts the tab it opens on even when that is a New Tab page.

@@ -45,6 +45,7 @@ function installListeners(): void {
 		attachedTabs.delete(tabId);
 		viewportTabs.delete(tabId);
 		bannedTabs.delete(tabId);
+		pointers.delete(tabId);
 	});
 }
 
@@ -296,19 +297,22 @@ export async function click(
 	const button = options.button ?? "left";
 	const clickCount = options.clickCount ?? 1;
 	const modifiers = options.modifiers ?? 0;
-	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
+	await moveMouse(tabId, x, y, { modifiers });
+	await sleep(between(40, 120));
 	for (let i = 1; i <= clickCount; i++) {
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: i, modifiers });
+		await sleep(between(60, 130));
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, clickCount: i, modifiers });
+		if (i < clickCount) await sleep(between(70, 120));
 	}
 }
 
 export async function hover(tabId: number, x: number, y: number): Promise<void> {
-	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+	await moveMouse(tabId, x, y);
 }
 
 export async function drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }): Promise<void> {
-	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y });
+	await moveMouse(tabId, from.x, from.y);
 	await send(tabId, "Input.dispatchMouseEvent", {
 		type: "mousePressed",
 		x: from.x,
@@ -317,13 +321,9 @@ export async function drag(tabId: number, from: { x: number; y: number }, to: { 
 		buttons: 1,
 		clickCount: 1,
 	});
+	await sleep(between(60, 130));
 	// Pointer-driven apps (canvas editors) read `buttons` on move to know the button is held.
-	const steps = 12;
-	for (let i = 1; i <= steps; i++) {
-		const x = from.x + ((to.x - from.x) * i) / steps;
-		const y = from.y + ((to.y - from.y) * i) / steps;
-		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left", buttons: 1 });
-	}
+	await moveMouse(tabId, to.x, to.y, { button: "left", buttons: 1 }, { bend: false });
 	await send(tabId, "Input.dispatchMouseEvent", {
 		type: "mouseReleased",
 		x: to.x,
@@ -331,6 +331,39 @@ export async function drag(tabId: number, from: { x: number; y: number }, to: { 
 		button: "left",
 		clickCount: 1,
 	});
+}
+
+const pointers = new Map<number, { x: number; y: number }>();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const between = (min: number, max: number) => min + Math.random() * (max - min);
+
+async function moveMouse(
+	tabId: number,
+	x: number,
+	y: number,
+	extra: Record<string, unknown> = {},
+	{ bend = true }: { bend?: boolean } = {},
+): Promise<void> {
+	await ensureAttached(tabId);
+	const from = pointers.get(tabId) ?? {
+		x: Math.max(0, x + between(-260, 260)),
+		y: Math.max(0, y + between(120, 260)),
+	};
+	const distance = Math.hypot(x - from.x, y - from.y);
+	const steps = Math.max(1, Math.min(40, Math.round(distance / 18)));
+	const sway = bend ? between(-0.2, 0.2) * distance : 0;
+	const controlX = (from.x + x) / 2 + sway * ((y - from.y) / (distance || 1));
+	const controlY = (from.y + y) / 2 - sway * ((x - from.x) / (distance || 1));
+	for (let i = 1; i <= steps; i++) {
+		const t = i / steps;
+		const e = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+		const px = (1 - e) ** 2 * from.x + 2 * (1 - e) * e * controlX + e ** 2 * x;
+		const py = (1 - e) ** 2 * from.y + 2 * (1 - e) * e * controlY + e ** 2 * y;
+		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: px, y: py, ...extra });
+		if (i < steps) await sleep(between(8, 18));
+	}
+	pointers.set(tabId, { x, y });
 }
 
 export async function scroll(tabId: number, x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
@@ -345,8 +378,22 @@ export async function typeText(tabId: number, text: string): Promise<void> {
 			await pressKey(tabId, "Enter");
 			continue;
 		}
-		await send(tabId, "Input.dispatchKeyEvent", { type: "keyDown", text: char, key: char });
-		await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", text: char, key: char });
+		const { key, code, keyCode, shift } = keyInfo(char);
+		const modifiers = shift ? MODIFIER_BITS.Shift : 0;
+		const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers };
+		const shiftKey = { key: "Shift", code: "ShiftLeft", windowsVirtualKeyCode: 16, nativeVirtualKeyCode: 16 };
+		if (shift) {
+			await send(tabId, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...shiftKey, modifiers });
+			await sleep(between(20, 60));
+		}
+		await send(tabId, "Input.dispatchKeyEvent", { type: "keyDown", text: char, ...base });
+		await sleep(between(25, 70));
+		await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
+		if (shift) {
+			await sleep(between(10, 40));
+			await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...shiftKey });
+		}
+		await sleep(between(30, 120));
 	}
 }
 
@@ -355,7 +402,44 @@ interface KeyInfo {
 	code: string;
 	keyCode: number;
 	text?: string;
+	shift?: boolean;
 }
+
+const US_PUNCTUATION: Record<string, [code: string, keyCode: number, shift: boolean]> = {
+	" ": ["Space", 32, false],
+	"-": ["Minus", 189, false],
+	_: ["Minus", 189, true],
+	"=": ["Equal", 187, false],
+	"+": ["Equal", 187, true],
+	"[": ["BracketLeft", 219, false],
+	"{": ["BracketLeft", 219, true],
+	"]": ["BracketRight", 221, false],
+	"}": ["BracketRight", 221, true],
+	"\\": ["Backslash", 220, false],
+	"|": ["Backslash", 220, true],
+	";": ["Semicolon", 186, false],
+	":": ["Semicolon", 186, true],
+	"'": ["Quote", 222, false],
+	'"': ["Quote", 222, true],
+	",": ["Comma", 188, false],
+	"<": ["Comma", 188, true],
+	".": ["Period", 190, false],
+	">": ["Period", 190, true],
+	"/": ["Slash", 191, false],
+	"?": ["Slash", 191, true],
+	"`": ["Backquote", 192, false],
+	"~": ["Backquote", 192, true],
+	"!": ["Digit1", 49, true],
+	"@": ["Digit2", 50, true],
+	"#": ["Digit3", 51, true],
+	$: ["Digit4", 52, true],
+	"%": ["Digit5", 53, true],
+	"^": ["Digit6", 54, true],
+	"&": ["Digit7", 55, true],
+	"*": ["Digit8", 56, true],
+	"(": ["Digit9", 57, true],
+	")": ["Digit0", 48, true],
+};
 
 const KEY_MAP: Record<string, KeyInfo> = {
 	Enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
@@ -394,6 +478,11 @@ const MODIFIER_BITS: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shi
 
 export function keyInfo(name: string): KeyInfo {
 	if (KEY_MAP[name]) return KEY_MAP[name];
+	const punctuation = US_PUNCTUATION[name];
+	if (punctuation) {
+		const [code, keyCode, shift] = punctuation;
+		return { key: name, code, keyCode, text: name, shift };
+	}
 	if (name.length === 1) {
 		const upper = name.toUpperCase();
 		const isLetter = /[A-Z]/.test(upper);
@@ -403,6 +492,7 @@ export function keyInfo(name: string): KeyInfo {
 			code: isLetter ? `Key${upper}` : isDigit ? `Digit${name}` : "",
 			keyCode: isLetter || isDigit ? upper.charCodeAt(0) : 0,
 			text: name,
+			shift: isLetter && name !== name.toLowerCase(),
 		};
 	}
 	return { key: name, code: name, keyCode: 0 };
@@ -443,6 +533,7 @@ export async function pressKey(tabId: number, chord: string): Promise<void> {
 		...base,
 		...(info.text && modifiers === 0 ? { text: info.text } : {}),
 	});
+	await sleep(between(30, 80));
 	await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
 	for (const m of mods.reverse()) {
 		const minfo = keyInfo(m);

@@ -307,6 +307,51 @@ export async function click(
 	}
 }
 
+const CHOOSER_TIMEOUT_MS = 5000;
+
+interface FileChooser {
+	mode: "selectSingle" | "selectMultiple";
+	backendNodeId?: number;
+}
+
+export async function chooseFiles(tabId: number, at: { x: number; y: number }, paths: string[]): Promise<void> {
+	await ensureAttached(tabId);
+	let listener: Parameters<typeof chrome.debugger.onEvent.addListener>[0] | undefined;
+	try {
+		await send(tabId, "Page.enable");
+		await send(tabId, "Page.setInterceptFileChooserDialog", { enabled: true });
+		const opened = new Promise<FileChooser>((resolve) => {
+			listener = (source, method, params) => {
+				if (source.tabId === tabId && method === "Page.fileChooserOpened") resolve(params as FileChooser);
+			};
+			chrome.debugger.onEvent.addListener(listener);
+		});
+		await click(tabId, at.x, at.y);
+		const chooser = await deadline(
+			opened,
+			CHOOSER_TIMEOUT_MS,
+			`The element did not open a file chooser within ${CHOOSER_TIMEOUT_MS} ms. Target the visible upload button or drop zone. Upload into cross-site iframes is not supported.`,
+		);
+		if (chooser.backendNodeId === undefined) throw new Error("The file chooser was not opened by a file input.");
+		if (chooser.mode === "selectSingle" && paths.length > 1) {
+			throw new Error("The file chooser accepts only one file; provide a single path.");
+		}
+		await send(tabId, "DOM.setFileInputFiles", { files: paths, backendNodeId: chooser.backendNodeId }).catch(
+			(err) => {
+				if (String(err instanceof Error ? err.message : err).includes("Not allowed")) {
+					throw new Error(
+						'Enable "Allow access to file URLs" for sitegeist in chrome://extensions to upload local files.',
+					);
+				}
+				throw err;
+			},
+		);
+	} finally {
+		if (listener) chrome.debugger.onEvent.removeListener(listener);
+		await send(tabId, "Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => undefined);
+	}
+}
+
 export async function hover(tabId: number, x: number, y: number): Promise<void> {
 	await moveMouse(tabId, x, y);
 }

@@ -187,6 +187,7 @@ export const BRIDGE_METHODS = [
 	"press",
 	"scroll",
 	"fill",
+	"upload",
 	"evaluate",
 	"wait",
 	"console.read",

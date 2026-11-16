@@ -7,6 +7,7 @@
 import {
 	captureScreenshot,
 	scroll as cdpScroll,
+	chooseFiles,
 	click,
 	drag,
 	enableNetworkCapture,
@@ -386,6 +387,20 @@ export const handlers: Record<string, Handler> = {
 		if (!t.ref && !t.selector) throw new BridgeError(ERR.BAD_PARAMS, "ref or selector is required");
 		await fillElement(tabId, t, value);
 		return { filled: t };
+	},
+
+	upload: async (ctx, params) => {
+		const paths = params.paths;
+		if (
+			!Array.isArray(paths) ||
+			paths.length === 0 ||
+			!paths.every((path): path is string => typeof path === "string")
+		) {
+			throw new BridgeError(ERR.BAD_PARAMS, "paths must be a non-empty array of strings");
+		}
+		const tabId = await resolveTab(ctx, params, true);
+		await chooseFiles(tabId, await pointFor(ctx, params, tabId), paths);
+		return { uploaded: paths };
 	},
 
 	evaluate: async (ctx, params) => {

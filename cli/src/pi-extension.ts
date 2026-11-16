@@ -47,7 +47,7 @@ function extensionSource(): string {
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
@@ -140,6 +140,15 @@ class Bridge {
 	}
 }
 
+function validateUploadPaths(paths: string[]): void {
+	for (const path of paths) {
+		if (!isAbsolute(path)) throw new Error(\`Upload path must be absolute: \${path}\`);
+		const stat = statSync(path, { throwIfNoEntry: false });
+		if (!stat) throw new Error(\`Upload path does not exist: \${path}\`);
+		if (!stat.isFile()) throw new Error(\`Upload path must be a regular file: \${path}\`);
+	}
+}
+
 const bridge = new Bridge();
 
 function toResult(value: unknown): { content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; details: unknown } {
@@ -164,6 +173,16 @@ function toResult(value: unknown): { content: Array<{ type: "text"; text: string
 
 export default function sitegeistExtension(pi: ExtensionAPI) {
 ${tools}
+	pi.registerTool({
+		name: "browser_upload",
+		label: "Browser: upload",
+		description: "Upload a local file into a page. Target the visible upload button or drop zone (ref, selector, or x/y of the latest screenshot), not a hidden input. Paths must be absolute. Do not use run_js or a local server for uploads.",
+		parameters: Type.Object({ paths: Type.Array(Type.String(), { minItems: 1 }), ref: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), x: Type.Optional(Type.Number()), y: Type.Optional(Type.Number()), tabId: Type.Optional(Type.Number()) }),
+		async execute(_id, params) {
+			validateUploadPaths(params.paths);
+			return toResult(await bridge.call("upload", params as Record<string, unknown>));
+		},
+	});
 }
 `;
 }

@@ -11,6 +11,7 @@ import type { BrowserProfile } from "../../src/bridge/protocol.ts";
 import { BridgeClient, BridgeRpcError, probeBridges } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
 import { describeProfile, hasExtension, openProfile, profileStatusLines, resolveProfile, sameProfile } from "./profiles.ts";
+import { validateUploadPaths } from "./upload.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -117,6 +118,7 @@ export async function runMcpServer(): Promise<void> {
 				"sitegeist drives the user's real Chromium browser in the background.",
 				"You get your own tab group; your tabs never take focus and you cannot see the user's other tabs.",
 				"Workflow: navigate(url) -> read_page (refs) -> click/type/fill by ref -> read_page again to confirm.",
+				"Upload local files into pages with upload.",
 				"For canvas apps and multi-step input, batch steps with actions (one call, screenshot at the end) instead of one tool call per key or drag.",
 				"Canvas editors (Excalidraw, tldraw, Figma-like): use the app's keyboard shortcuts and mouse drags, check the result on the screenshot, and do not reverse-engineer the app's internals with run_js.",
 				"Reuse your current tab for step-by-step browsing; tabs_create only when two pages must stay open.",
@@ -404,6 +406,22 @@ export async function runMcpServer(): Promise<void> {
 			inputSchema: { value: z.string(), tabId, ref: z.string().optional(), selector: z.string().optional() },
 		},
 		(args) => call("fill", args),
+	);
+	server.registerTool(
+		"upload",
+		{
+			description:
+				"Upload a local file into a page. Target the visible upload button or drop zone (ref, selector, or x/y of the latest screenshot), not a hidden input. Paths must be absolute. Do not use run_js or a local server for uploads.",
+			inputSchema: { ...targetSchema, paths: z.array(z.string()).nonempty() },
+		},
+		(args) => {
+			try {
+				validateUploadPaths(args.paths);
+			} catch (err) {
+				return errorResult(err);
+			}
+			return call("upload", args);
+		},
 	);
 	server.registerTool(
 		"scroll",

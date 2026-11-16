@@ -84,6 +84,6 @@ the newest bridge.
 
 `tabs_context`, `tabs_create`, `tabs_close`, `tabs_select`, `tabs_show`, `navigate`,
 `screenshot`, `read_page`, `get_page_text`, `get_page_html`, `find`, `click`, `hover`,
-`type`, `press`, `fill`, `scroll`, `drag`, `actions`, `run_js`, `wait`, `read_console`,
+`type`, `press`, `fill`, `upload`, `scroll`, `drag`, `actions`, `run_js`, `wait`, `read_console`,
 `read_network`, `profiles`, `profile_use`. `tabs_show` brings a tab forward; `navigate`
 with `showTab` also does so, and `profile_use` opens a window when opening a closed profile.

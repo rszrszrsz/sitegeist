@@ -60,15 +60,11 @@ export async function ensureAttached(tabId: number): Promise<void> {
 		throw new Error("The debugger was closed by the user on this tab. Navigate the tab to a new page to continue.");
 	}
 	if (!attachedTabs.has(tabId)) {
-		const targets = await chrome.debugger.getTargets();
-		const already = targets.some((t) => t.tabId === tabId && t.attached);
-		if (!already) {
-			try {
-				await chrome.debugger.attach({ tabId }, PROTOCOL_VERSION);
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				if (!message.includes("already attached")) throw new Error(`Cannot attach to tab ${tabId}: ${message}`);
-			}
+		try {
+			await chrome.debugger.attach({ tabId }, PROTOCOL_VERSION);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (!message.includes("already attached")) throw new Error(`Cannot attach to tab ${tabId}: ${message}`);
 		}
 		attachedTabs.add(tabId);
 		// Hidden tabs freeze rAF; focus emulation unfreezes it and makes the page report

@@ -19,6 +19,7 @@
 
 ### Changed
 - Input looks human to behavioral bot detection: the pointer travels along an eased curve from its last position, clicks hold the button and land off-center within the element, keys are held with varied gaps, carry real `code`/`keyCode`, and shifted characters press Shift. deviceandbrowserinfo.com's login test went from `superHumanSpeed` and `suspiciousClientSideBehavior` to clean in 3 of 3 runs. Clicks take about 0.3 to 0.6 s longer and `type` about 120 ms per character.
+- Input timing is log-normal instead of uniform (mostly quick, occasionally a long pause), as human reaction and keystroke times are. `type` pauses longer after spaces and punctuation and hesitates now and then, about 150 ms per character on average.
 - Scrolling is a wheel gesture: `scroll` (by dx/dy, to top/bottom, to an element) and reaching an off-screen element before a click, `type` or hover move the pointer over the scroll area and swipe with `Input.synthesizeScrollGesture`, where pages used to see a bare `scroll` event. Pages get a run of `wheel` events with trackpad-like deltas and one `scrollend` per swipe; long distances take up to 4 swipes (about 4.5 s to the bottom of a long page). Elements already in view are no longer re-centered. The old jump remains when no point in view scrolls the right container (an off-screen inner scroller, a frame under the pointer). A swipe the page does not render (minimized window) fails with an error after a timeout.
 - The side-panel REPL overlay lives in a closed shadow root: pages see an empty host element instead of `#sitegeist-repl-overlay` and a stylesheet of `sitegeist-*` animations.
 - The `fill` tool description tells models that it sends no key events and to use `type` on watched forms.
@@ -29,6 +30,7 @@
 - Removed upstream working notes from the repository root (`db.md`, `gmail.md`, `plan.md`).
 
 ### Fixed
+- Clicks and drags report `pressure` 0.5 on `pointerdown` and on moves with the button held, like a real mouse. CDP mouse events default to force 0, so every agent `pointerdown` carried pressure 0.
 - CDP tools (`type`, `click`, screenshots, `run_js` in the main world) work on a tab that DevTools or another extension already debugs. Sitegeist took any debugger client on the tab for its own, skipped `chrome.debugger.attach`, and every command failed with "Debugger is not attached to the tab" until the tab closed.
 - Foreground guard: tabs the user opens from a tab they are looking at (a shared agent tab) stay the user's; they used to join the agent's session and become its current tab, so the agent could read pages the user opened from there.
 - `read_console` no longer marks the tab as automated: it enables the Runtime domain only while reading and gets what the page logged since it loaded from Chrome's replay. Before, Runtime stayed on after the first call and deviceandbrowserinfo's `console.log(new Error())` trap flagged every later page in the tab (`isAutomatedWithCDP`).

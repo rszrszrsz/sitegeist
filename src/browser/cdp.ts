@@ -294,12 +294,20 @@ export async function click(
 	const clickCount = options.clickCount ?? 1;
 	const modifiers = options.modifiers ?? 0;
 	await moveMouse(tabId, x, y, { modifiers });
-	await sleep(between(40, 120));
+	await sleep(humanMs(70, 0.4, 30, 250));
 	for (let i = 1; i <= clickCount; i++) {
-		await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: i, modifiers });
-		await sleep(between(60, 130));
+		await send(tabId, "Input.dispatchMouseEvent", {
+			type: "mousePressed",
+			x,
+			y,
+			button,
+			clickCount: i,
+			modifiers,
+			force: MOUSE_DOWN_FORCE,
+		});
+		await sleep(humanMs(90, 0.3, 45, 200));
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, clickCount: i, modifiers });
-		if (i < clickCount) await sleep(between(70, 120));
+		if (i < clickCount) await sleep(humanMs(95, 0.25, 60, 160));
 	}
 }
 
@@ -361,10 +369,11 @@ export async function drag(tabId: number, from: { x: number; y: number }, to: { 
 		button: "left",
 		buttons: 1,
 		clickCount: 1,
+		force: MOUSE_DOWN_FORCE,
 	});
-	await sleep(between(60, 130));
+	await sleep(humanMs(90, 0.3, 45, 200));
 	// Pointer-driven apps (canvas editors) read `buttons` on move to know the button is held.
-	await moveMouse(tabId, to.x, to.y, { button: "left", buttons: 1 }, { bend: false });
+	await moveMouse(tabId, to.x, to.y, { button: "left", buttons: 1, force: MOUSE_DOWN_FORCE }, { bend: false });
 	await send(tabId, "Input.dispatchMouseEvent", {
 		type: "mouseReleased",
 		x: to.x,
@@ -378,6 +387,24 @@ const pointers = new Map<number, { x: number; y: number }>();
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const between = (min: number, max: number) => min + Math.random() * (max - min);
+
+/**
+ * Human reaction and keystroke times are right-skewed (mostly quick, now and then a long
+ * pause), so detectors that look at the shape of the timing distribution flag uniform
+ * draws. Log-normal around `median`, clamped to [min, max].
+ */
+function humanMs(median: number, sigma: number, min: number, max: number): number {
+	const u = 1 - Math.random();
+	const normal = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
+	return Math.min(max, Math.max(min, median * Math.exp(sigma * normal)));
+}
+
+/**
+ * Pointer Events: a mouse without pressure sensing reports pressure 0.5 while a button is
+ * held and 0 otherwise. CDP mouse events default to force 0, so without this every
+ * pointerdown carried pressure 0, which a real mouse never sends.
+ */
+const MOUSE_DOWN_FORCE = 0.5;
 
 async function moveMouse(
 	tabId: number,
@@ -413,10 +440,10 @@ export function pointerAt(tabId: number): { x: number; y: number } | undefined {
 
 export async function scroll(tabId: number, x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
 	await moveMouse(tabId, x, y);
-	await sleep(between(60, 160));
+	await sleep(humanMs(100, 0.35, 50, 300));
 	const swipes = Math.min(4, Math.ceil(Math.hypot(deltaX, deltaY) / 1500));
 	for (let i = 0; i < swipes; i++) {
-		if (i > 0) await sleep(between(180, 400));
+		if (i > 0) await sleep(humanMs(270, 0.3, 150, 600));
 		await swipe(tabId, x, y, deltaX / swipes, deltaY / swipes);
 	}
 }
@@ -452,17 +479,24 @@ export async function typeText(tabId: number, text: string): Promise<void> {
 		const shiftKey = { key: "Shift", code: "ShiftLeft", windowsVirtualKeyCode: 16, nativeVirtualKeyCode: 16 };
 		if (shift) {
 			await send(tabId, "Input.dispatchKeyEvent", { type: "rawKeyDown", ...shiftKey, modifiers });
-			await sleep(between(20, 60));
+			await sleep(humanMs(40, 0.35, 15, 110));
 		}
 		await send(tabId, "Input.dispatchKeyEvent", { type: "keyDown", text: char, ...base });
-		await sleep(between(25, 70));
+		await sleep(humanMs(55, 0.3, 25, 140));
 		await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
 		if (shift) {
-			await sleep(between(10, 40));
+			await sleep(humanMs(25, 0.4, 8, 80));
 			await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...shiftKey });
 		}
-		await sleep(between(30, 120));
+		await sleep(keystrokeGap(char));
 	}
+}
+
+/** Pause after a key: longer at word and sentence boundaries, with an occasional hesitation. */
+function keystrokeGap(char: string): number {
+	const boundary = char === " " || /[.,;:!?]/.test(char);
+	const gap = boundary ? humanMs(150, 0.45, 50, 700) : humanMs(70, 0.45, 25, 450);
+	return Math.random() < 0.02 ? gap + humanMs(450, 0.4, 200, 1500) : gap;
 }
 
 interface KeyInfo {
@@ -601,7 +635,7 @@ export async function pressKey(tabId: number, chord: string): Promise<void> {
 		...base,
 		...(info.text && modifiers === 0 ? { text: info.text } : {}),
 	});
-	await sleep(between(30, 80));
+	await sleep(humanMs(55, 0.3, 25, 140));
 	await send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
 	for (const m of mods.reverse()) {
 		const minfo = keyInfo(m);
